@@ -1,0 +1,23 @@
+# Xcode
+.DS_Store
+xcuserdata/
+DerivedData/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+
+# SwiftPM
+.build/
+Package.resolved
+
+# Logs / temp
+*.log
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# CocoaPods / Carthage (if you ever add them)
+Pods/
+Carthage/Build/
+

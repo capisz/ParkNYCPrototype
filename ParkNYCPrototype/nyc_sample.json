@@ -1,0 +1,41 @@
+{
+  "segments": [
+    {
+      "name": "W 45 St (sample) — Metered",
+      "status": "caution",
+      "explanation": "Sample data near Times Square. Confirm posted signs and meter/ParkNYC.",
+      "isMeteredLikely": true,
+      "paidHoursText": "Mon–Sat 9am–7pm",
+      "rateText": "$3.50/hr (sample)",
+      "coordinates": [
+        { "lat": 40.75855, "lng": -73.98820 },
+        { "lat": 40.75855, "lng": -73.98660 }
+      ]
+    },
+    {
+      "name": "Broadway (sample) — ASP likely",
+      "status": "legalNow",
+      "explanation": "Sample ASP-style segment. Confirm posted signs.",
+      "isMeteredLikely": false,
+      "paidHoursText": null,
+      "rateText": null,
+      "coordinates": [
+        { "lat": 40.75810, "lng": -73.98590 },
+        { "lat": 40.75900, "lng": -73.98520 }
+      ]
+    },
+    {
+      "name": "7 Ave (sample) — No Standing window",
+      "status": "illegalNow",
+      "explanation": "Sample restriction segment. Confirm posted signs.",
+      "isMeteredLikely": false,
+      "paidHoursText": null,
+      "rateText": null,
+      "coordinates": [
+        { "lat": 40.75740, "lng": -73.98690 },
+        { "lat": 40.75740, "lng": -73.98540 }
+      ]
+    }
+  ]
+}
+

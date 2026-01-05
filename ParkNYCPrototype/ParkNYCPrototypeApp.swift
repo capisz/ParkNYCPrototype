@@ -1,10 +1,3 @@
-//
-//  ParkNYCPrototypeApp.swift
-//  ParkNYCPrototype
-//
-//  Created by NYCDOE on 12/27/25.
-//
-
 import SwiftUI
 import SwiftData
 

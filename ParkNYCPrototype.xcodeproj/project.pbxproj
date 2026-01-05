@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		84EE76412F03636D00976F66 /* VisionKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 84EE76402F03636D00976F66 /* VisionKit.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		84EE760D2F005C1900976F66 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		84EE75FD2F005C1800976F66 /* ParkNYCPrototype.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ParkNYCPrototype.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		84EE760C2F005C1900976F66 /* ParkNYCPrototypeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ParkNYCPrototypeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		84EE76162F005C1900976F66 /* ParkNYCPrototypeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ParkNYCPrototypeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		84EE76402F03636D00976F66 /* VisionKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VisionKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.2.sdk/System/Library/Frameworks/VisionKit.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -52,6 +57,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				84EE76412F03636D00976F66 /* VisionKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +84,7 @@
 				84EE75FF2F005C1800976F66 /* ParkNYCPrototype */,
 				84EE760F2F005C1900976F66 /* ParkNYCPrototypeTests */,
 				84EE76192F005C1900976F66 /* ParkNYCPrototypeUITests */,
+				84EE763F2F03636C00976F66 /* Frameworks */,
 				84EE75FE2F005C1800976F66 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,6 +97,14 @@
 				84EE76162F005C1900976F66 /* ParkNYCPrototypeUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		84EE763F2F03636C00976F66 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				84EE76402F03636D00976F66 /* VisionKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -394,6 +409,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We use your location to show nearby legal curb parking guidance.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -436,6 +453,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We use your location to show nearby legal curb parking guidance.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
