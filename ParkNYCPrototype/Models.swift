@@ -11,9 +11,9 @@ enum ParkingStatus: String {
 
     var title: String {
         switch self {
-        case .legalNow: return "Legal now"
-        case .caution: return "Caution"
-        case .illegalNow: return "Not legal now"
+        case .legalNow: return "Free parking now"
+        case .caution: return "Paid parking now"
+        case .illegalNow: return "Do not park now"
         case .unknown: return "Unknown"
         }
     }
@@ -42,6 +42,41 @@ struct CurbSegment: Identifiable {
     // NEW (simple strings for now)
     let paidHoursText: String?
     let rateText: String?
+}
+
+struct GarageOption: Identifiable {
+    let id: String
+    let name: String
+    let address: String
+    let coordinate: CLLocationCoordinate2D
+    let distanceMeters: CLLocationDistance
+    let phoneNumber: String?
+
+    init(
+        name: String,
+        address: String,
+        coordinate: CLLocationCoordinate2D,
+        distanceMeters: CLLocationDistance,
+        phoneNumber: String?
+    ) {
+        let latKey = String(format: "%.5f", coordinate.latitude)
+        let lonKey = String(format: "%.5f", coordinate.longitude)
+        self.id = "\(name.uppercased())|\(latKey)|\(lonKey)"
+        self.name = name
+        self.address = address
+        self.coordinate = coordinate
+        self.distanceMeters = distanceMeters
+        self.phoneNumber = phoneNumber
+    }
+
+    var distanceText: String {
+        let miles = distanceMeters / 1609.344
+        if miles >= 0.2 {
+            return String(format: "%.1f mi", miles)
+        }
+        let feet = distanceMeters * 3.28084
+        return "\(Int(feet.rounded())) ft"
+    }
 }
 
 

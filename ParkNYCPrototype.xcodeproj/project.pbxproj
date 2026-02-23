@@ -28,7 +28,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		84EE75FD2F005C1800976F66 /* ParkNYCPrototype.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ParkNYCPrototype.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		84EE75FD2F005C1800976F66 /* ParkNYCPrototype.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = ParkNYCPrototype.app; path = Pidge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		84EE760C2F005C1900976F66 /* ParkNYCPrototypeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ParkNYCPrototypeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		84EE76162F005C1900976F66 /* ParkNYCPrototypeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ParkNYCPrototypeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		84EE76402F03636D00976F66 /* VisionKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VisionKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.2.sdk/System/Library/Frameworks/VisionKit.framework; sourceTree = DEVELOPER_DIR; };
@@ -408,9 +408,14 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We use your location to show nearby legal curb parking guidance.";
+					GENERATE_INFOPLIST_FILE = YES;
+					INFOPLIST_KEY_CFBundleDisplayName = Pidge;
+					INFOPLIST_KEY_CFBundleName = Pidge;
+					INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
+					INFOPLIST_KEY_NSCameraUsageDescription = "We use the camera to scan posted parking signs for rule text.";
+					INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Pidge uses your local network connection to reach your parking backend.";
+					INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We use your location to show nearby legal curb parking guidance.";
+					INFOPLIST_KEY_ParkingBackendBaseURL = "http://127.0.0.1:8080";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -427,7 +432,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = chriszcodes.ParkNYCPrototype;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Pidge;
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -452,9 +457,14 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We use your location to show nearby legal curb parking guidance.";
+					GENERATE_INFOPLIST_FILE = YES;
+					INFOPLIST_KEY_CFBundleDisplayName = Pidge;
+					INFOPLIST_KEY_CFBundleName = Pidge;
+					INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
+					INFOPLIST_KEY_NSCameraUsageDescription = "We use the camera to scan posted parking signs for rule text.";
+					INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Pidge uses your local network connection to reach your parking backend.";
+					INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We use your location to show nearby legal curb parking guidance.";
+					INFOPLIST_KEY_ParkingBackendBaseURL = "http://127.0.0.1:8080";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -471,7 +481,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = chriszcodes.ParkNYCPrototype;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Pidge;
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
