@@ -42,6 +42,26 @@ struct CurbSegment: Identifiable {
     // NEW (simple strings for now)
     let paidHoursText: String?
     let rateText: String?
+    let confidence: Double
+    let ruleSummary: String
+    let sourceFreshness: String?
+
+    init(name: String, coordinates: [CLLocationCoordinate2D], status: ParkingStatus,
+         explanation: String, isMeteredLikely: Bool, nextChange: Date?,
+         paidHoursText: String?, rateText: String?, confidence: Double = 0.25,
+         ruleSummary: String? = nil, sourceFreshness: String? = nil) {
+        self.name = name
+        self.coordinates = coordinates
+        self.status = status
+        self.explanation = explanation
+        self.isMeteredLikely = isMeteredLikely
+        self.nextChange = nextChange
+        self.paidHoursText = paidHoursText
+        self.rateText = rateText
+        self.confidence = confidence
+        self.ruleSummary = ruleSummary ?? explanation
+        self.sourceFreshness = sourceFreshness
+    }
 }
 
 struct GarageOption: Identifiable {

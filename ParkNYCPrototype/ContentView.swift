@@ -230,6 +230,11 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
 
+                Button("Continue as Guest") {
+                    authSession.continueAsGuest()
+                }
+                .buttonStyle(.bordered)
+
                 if let authStatus {
                     Text(authStatus)
                         .font(.caption)

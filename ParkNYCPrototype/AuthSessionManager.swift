@@ -56,6 +56,7 @@ enum AuthError: LocalizedError {
 final class AuthSessionManager: ObservableObject {
     @Published private(set) var currentUser: AuthUser?
     @Published private(set) var backend: AuthBackend = .localFallback
+    @Published private(set) var isGuest = false
 
     var isAuthenticated: Bool {
         currentUser != nil
@@ -155,6 +156,7 @@ final class AuthSessionManager: ObservableObject {
     }
 
     func logOut() {
+        isGuest = false
         switch backend {
         case .firebase:
 #if canImport(FirebaseAuth)
@@ -169,6 +171,11 @@ final class AuthSessionManager: ObservableObject {
             defaults.removeObject(forKey: currentUserEmailKey)
             currentUser = nil
         }
+    }
+
+    func continueAsGuest() {
+        isGuest = true
+        currentUser = AuthUser(name: "Guest", email: "")
     }
 
     private func signUpLocal(name: String, email: String, password: String) -> Result<Void, AuthError> {

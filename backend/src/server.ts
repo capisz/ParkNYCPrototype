@@ -2,6 +2,7 @@ import express from "express";
 import { config } from "./config";
 import { pool } from "./db";
 import parkingRoutes from "./routes/parking";
+import externalRoutes from "./routes/external";
 
 export function createApp() {
   const app = express();
@@ -31,14 +32,20 @@ export function createApp() {
 
   app.get("/health", async (_req, res) => {
     try {
-      await pool.query("SELECT 1");
-      res.json({ ok: true, timezone: config.timezone });
+      const counts = await pool.query(`SELECT
+        (SELECT count(*)::int FROM curb_segments) AS curb_segments,
+        (SELECT count(*)::int FROM curb_rules) AS curb_rules,
+        (SELECT count(*)::int FROM parking_signs_raw) AS parking_signs,
+        (SELECT count(*)::int FROM meter_blockfaces_raw) AS meters`);
+      const migrations = await pool.query("SELECT filename, applied_at FROM schema_migrations ORDER BY applied_at DESC LIMIT 1").catch(() => ({ rows: [] }));
+      res.json({ ok: true, database: "connected", timezone: config.timezone, migration: migrations.rows[0] ?? null, rowCounts: counts.rows[0], checkedAt: new Date().toISOString() });
     } catch (error) {
       res.status(500).json({ ok: false, error: "db_unavailable" });
     }
   });
 
   app.use("/api/parking", parkingRoutes);
+  app.use("/api", externalRoutes);
 
   app.use((_req, res) => {
     res.status(404).json({ error: "Not found" });

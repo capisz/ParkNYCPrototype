@@ -147,7 +147,7 @@ final class BackendParkingService {
             name = feature.properties.blockfaceKey?.trimmedNonEmpty ?? "NYC curb segment"
         }
 
-        let explanation = feature.properties.reason?.trimmedNonEmpty ?? defaultExplanation(for: status)
+        let explanation = feature.properties.ruleSummary?.trimmedNonEmpty ?? feature.properties.reason?.trimmedNonEmpty ?? defaultExplanation(for: status)
         let rateText = feature.properties.meterRate?.trimmedNonEmpty
         let paidHoursText = feature.properties.paidHours?.trimmedNonEmpty
 
@@ -157,9 +157,12 @@ final class BackendParkingService {
             status: status,
             explanation: explanation,
             isMeteredLikely: status == .caution || rateText != nil || paidHoursText != nil,
-            nextChange: nil,
+            nextChange: feature.properties.nextChange.flatMap(iso8601.date(from:)),
             paidHoursText: paidHoursText,
-            rateText: rateText
+            rateText: rateText,
+            confidence: feature.properties.confidence ?? 0.25,
+            ruleSummary: explanation,
+            sourceFreshness: feature.properties.sourceFreshness
         )
     }
 
@@ -289,6 +292,10 @@ private struct BackendProperties: Decodable {
     let blockfaceKey: String?
     let status: String?
     let reason: String?
+    let confidence: Double?
+    let ruleSummary: String?
+    let nextChange: String?
+    let sourceFreshness: String?
     let onStreet: String?
     let fromStreet: String?
     let toStreet: String?

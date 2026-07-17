@@ -48,6 +48,9 @@ type ViewportFeature = {
     color: string;
     confidence: number;
     reason: string | null;
+    ruleSummary: string;
+    nextChange: string | null;
+    sourceFreshness: string | null;
     onStreet: string | null;
     fromStreet: string | null;
     toStreet: string | null;
@@ -286,6 +289,9 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
         color: statusColor(status),
         confidence: parseConfidence(row.confidence),
         reason: row.reason,
+        ruleSummary: row.reason ?? "Parking status is unknown because no active, reliable rule matched this curb.",
+        nextChange: null,
+        sourceFreshness: null,
         onStreet: row.on_street,
         fromStreet: row.from_street,
         toStreet: row.to_street,

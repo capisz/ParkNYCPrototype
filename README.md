@@ -14,3 +14,16 @@ The revival branch adds an interactive browser companion while preserving the
 native application. See `docs/revival-baseline.md` for local recovery commands
 and verified toolchain status.
 
+## Local development
+
+Create `backend/.env` from the example and set a rotated `DATABASE_URL`, then:
+
+```sh
+npm install
+npm install --prefix backend
+npm install --prefix web
+npm run dev
+```
+
+The API listens on `http://127.0.0.1:8080` and the browser client on the Vite
+URL printed in the terminal. Run `npm test` and `npm run build` before pushing.
