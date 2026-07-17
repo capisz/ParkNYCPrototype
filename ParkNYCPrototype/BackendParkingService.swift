@@ -46,7 +46,13 @@ final class BackendParkingService {
         asOf: Date = Date()
     ) async throws -> [CurbSegment] {
         let bbox = BoundingBox(center: coordinate, radiusMeters: Double(radiusMeters))
-        let fetched = try await fetchSegments(in: bbox, sortedNear: coordinate, asOf: asOf)
+        let fetched = try await fetchSegments(
+            in: bbox,
+            sortedNear: coordinate,
+            proximityRadiusMeters: radiusMeters,
+            approximateZoom: approximateZoom(for: radiusMeters),
+            asOf: asOf
+        )
         let center = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         return fetched.filter { segment in
             let segmentMidpoint = midpoint(of: segment.coordinates)
@@ -60,12 +66,20 @@ final class BackendParkingService {
         asOf: Date = Date()
     ) async throws -> [CurbSegment] {
         let bbox = BoundingBox(region: region)
-        return try await fetchSegments(in: bbox, sortedNear: region.center, asOf: asOf)
+        return try await fetchSegments(
+            in: bbox,
+            sortedNear: region.center,
+            proximityRadiusMeters: nil,
+            approximateZoom: nil,
+            asOf: asOf
+        )
     }
 
     private func fetchSegments(
         in bbox: BoundingBox,
         sortedNear coordinate: CLLocationCoordinate2D,
+        proximityRadiusMeters: Int?,
+        approximateZoom: Double?,
         asOf: Date
     ) async throws -> [CurbSegment] {
         if shouldRejectLoopbackOnDevice(baseURL: baseURL) {
@@ -76,13 +90,22 @@ final class BackendParkingService {
             throw BackendParkingError.invalidURL
         }
 
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "minLat", value: decimalText(bbox.minLat)),
             URLQueryItem(name: "minLng", value: decimalText(bbox.minLng)),
             URLQueryItem(name: "maxLat", value: decimalText(bbox.maxLat)),
             URLQueryItem(name: "maxLng", value: decimalText(bbox.maxLng)),
             URLQueryItem(name: "asOf", value: iso8601.string(from: asOf))
         ]
+        if let proximityRadiusMeters, let approximateZoom {
+            queryItems.append(contentsOf: [
+                URLQueryItem(name: "centerLat", value: decimalText(coordinate.latitude)),
+                URLQueryItem(name: "centerLng", value: decimalText(coordinate.longitude)),
+                URLQueryItem(name: "radiusMeters", value: String(proximityRadiusMeters)),
+                URLQueryItem(name: "zoom", value: decimalText(approximateZoom))
+            ])
+        }
+        components.queryItems = queryItems
 
         guard let url = components.url else {
             throw BackendParkingError.invalidURL
@@ -125,6 +148,11 @@ final class BackendParkingService {
             .appendingPathComponent("api")
             .appendingPathComponent("parking")
             .appendingPathComponent("viewport")
+    }
+
+    private func approximateZoom(for radiusMeters: Int) -> Double {
+        let radius = max(120, min(1200, radiusMeters))
+        return max(15.5, min(22, 16 + log2(1200 / Double(radius))))
     }
 
     private func mapFeature(_ feature: BackendFeature) -> CurbSegment? {

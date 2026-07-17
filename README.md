@@ -16,7 +16,25 @@ and verified toolchain status.
 
 ## Local development
 
-Create `backend/.env` from the example and set a rotated `DATABASE_URL`, then:
+On a Mac where the system PostgreSQL server is administrator-controlled, create
+Pidge's isolated user-owned PostgreSQL/PostGIS cluster without `sudo`:
+
+```sh
+npm run db:bootstrap
+npm --prefix backend run ingest:all
+```
+
+The cluster is stored outside Git at
+`~/Library/Application Support/Pidge/Postgres18` and listens only on
+`127.0.0.1:55432`. Its generated application credential is written to the
+ignored `backend/.env` file. On later launches, start the database and app with:
+
+```sh
+npm run dev:live
+```
+
+For a separately managed PostgreSQL server, create `backend/.env` from the
+example and set a rotated `DATABASE_URL`, then:
 
 ```sh
 npm install

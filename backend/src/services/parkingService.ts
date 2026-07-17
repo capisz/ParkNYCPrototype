@@ -16,6 +16,10 @@ type ViewportInput = {
   minLng: number;
   maxLat: number;
   maxLng: number;
+  centerLat?: number;
+  centerLng?: number;
+  radiusMeters?: number;
+  zoom?: number;
   asOf?: Date;
 };
 
@@ -83,6 +87,12 @@ export type ViewportResponse = {
   totalMatched: number;
   returned: number;
   clipped: boolean;
+  scope: {
+    kind: "viewport" | "proximity";
+    center: { latitude: number; longitude: number } | null;
+    radiusMeters: number | null;
+    zoom: number | null;
+  };
   summary: ViewportSummary;
   features: ViewportFeature[];
 };
@@ -213,6 +223,19 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
     WITH bbox AS (
       SELECT ST_MakeEnvelope($1, $2, $3, $4, 4326) AS geom
     ),
+    scope AS (
+      SELECT CASE
+        WHEN $8::float8 IS NULL THEN b.geom
+        ELSE ST_Intersection(
+          b.geom,
+          ST_Buffer(
+            ST_SetSRID(ST_MakePoint($8, $9), 4326)::geography,
+            $10
+          )::geometry
+        )
+      END AS geom
+      FROM bbox b
+    ),
     candidates AS (
       SELECT
         s.id,
@@ -224,9 +247,13 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
         s.paid_hours,
         s.meter_rate,
         s.updated_at,
-        s.geom
+        clipped.geom
       FROM curb_segments s
-      JOIN bbox b ON ST_Intersects(s.geom, b.geom)
+      JOIN scope query_scope ON ST_Intersects(s.geom, query_scope.geom)
+      CROSS JOIN LATERAL (
+        SELECT ST_CollectionExtract(ST_Intersection(s.geom, query_scope.geom), 2) AS geom
+      ) clipped
+      WHERE NOT ST_IsEmpty(clipped.geom)
     ),
     active_rules AS (
       SELECT
@@ -262,6 +289,17 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
          OR (r.start_minute = 0 AND r.end_minute = 1440 AND (r.day_mask & $5) <> 0)
        )
     ),
+    rule_evidence AS (
+      SELECT
+        c.id AS curb_segment_id,
+        BOOL_OR(
+          r.status <> 'unknown' AND r.confidence >= 0.78
+          AND NOT (r.start_minute = 0 AND r.end_minute = 1440)
+        ) AS has_reliable_schedule
+      FROM candidates c
+      LEFT JOIN curb_rules r ON r.curb_segment_id = c.id
+      GROUP BY c.id
+    ),
     selected AS (
       SELECT
         c.id::text AS segment_id,
@@ -272,10 +310,15 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
         c.side_of_street,
         c.paid_hours,
         c.meter_rate,
-        COALESCE(ar.status, 'unknown') AS status,
-        COALESCE(ar.confidence, 0.25)::float8 AS confidence,
-        ar.reason,
-        ar.source AS rule_source,
+        CASE WHEN ar.status IS NULL AND re.has_reliable_schedule THEN 'free'
+          ELSE COALESCE(ar.status, 'unknown') END AS status,
+        CASE WHEN ar.status IS NULL AND re.has_reliable_schedule THEN 0.68
+          ELSE COALESCE(ar.confidence, 0.25) END::float8 AS confidence,
+        CASE WHEN ar.status IS NULL AND re.has_reliable_schedule
+          THEN 'No known sign or meter restriction is active in this curb schedule. Verify posted signs and general NYC parking rules.'
+          ELSE ar.reason END AS reason,
+        CASE WHEN ar.status IS NULL AND re.has_reliable_schedule
+          THEN 'derived-schedule-gap' ELSE ar.source END AS rule_source,
         ar.day_mask,
         ar.start_minute,
         ar.end_minute,
@@ -285,6 +328,7 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
       LEFT JOIN active_rules ar
         ON ar.curb_segment_id = c.id
        AND ar.rn = 1
+      LEFT JOIN rule_evidence re ON re.curb_segment_id = c.id
     )
     SELECT
       segment_id,
@@ -311,9 +355,14 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
       from_street NULLS LAST,
       to_street NULLS LAST,
       segment_id
-    LIMIT $8
+    LIMIT $11
     `,
-    [input.minLng, input.minLat, input.maxLng, input.maxLat, window.dayBit, window.previousDayBit, window.minuteOfDay, config.viewportMaxSegments]
+    [
+      input.minLng, input.minLat, input.maxLng, input.maxLat,
+      window.dayBit, window.previousDayBit, window.minuteOfDay,
+      input.centerLng ?? null, input.centerLat ?? null, input.radiusMeters ?? null,
+      config.viewportMaxSegments
+    ]
   );
 
   const summary: ViewportSummary = {
@@ -370,6 +419,15 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
     totalMatched,
     returned: features.length,
     clipped: totalMatched > features.length,
+    scope: {
+      kind: input.radiusMeters == null ? "viewport" : "proximity",
+      center: input.centerLat == null || input.centerLng == null ? null : {
+        latitude: input.centerLat,
+        longitude: input.centerLng
+      },
+      radiusMeters: input.radiusMeters ?? null,
+      zoom: input.zoom ?? null
+    },
     summary,
     features
   };

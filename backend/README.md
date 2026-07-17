@@ -5,6 +5,7 @@ This service ingests NYC open parking + street geometry data into Postgres/PostG
 - `no_parking` => red
 - `paid` => yellow
 - `free` => green
+- `unknown` => gray
 
 ## 1) Prerequisites
 
@@ -26,7 +27,18 @@ Set `DATABASE_URL` to your real DB credentials.
 
 ## 3) Postgres setup
 
-Open `psql` first (this is required before running SQL):
+For the repository-managed, no-`sudo` macOS cluster, run from the repository
+root:
+
+```bash
+npm run db:bootstrap
+```
+
+This creates an isolated cluster under
+`~/Library/Application Support/Pidge/Postgres18` on port `55432`.
+
+For an independently managed PostgreSQL server, open `psql` first:
+
 
 ```bash
 psql -U postgres
@@ -81,14 +93,25 @@ Health check:
 curl -s "http://localhost:8080/health"
 ```
 
-Viewport API example:
+Proximity API example:
 
 ```bash
-curl -s "http://localhost:8080/api/parking/viewport?minLat=40.741&minLng=-74.006&maxLat=40.757&maxLng=-73.983"
+curl -s "http://localhost:8080/api/parking/viewport?minLat=40.740&minLng=-74.000&maxLat=40.760&maxLng=-73.970&centerLat=40.750&centerLng=-73.985&radiusMeters=450&zoom=16.5"
 ```
 
 Response is GeoJSON `FeatureCollection` with `properties.status` and `properties.color` for direct map rendering.
 `http://localhost:8080/` now returns a small route index; it is no longer a 404.
+
+## Proximity loading
+
+- City-scale curb requests are rejected before PostGIS is queried.
+- Street overlays begin at client zoom `16` and are clipped in PostGIS to a
+  `100-1500 m` circle around the current map center.
+- Panning cancels stale browser requests; `moveend` loads only the new scope.
+- Hydrants and their 15-foot curb restrictions begin at zoom `19`.
+- Green requires either an explicit permission sign or a reliable known
+  schedule with no active restriction and no unresolved parking evidence.
+  Missing data remains gray rather than being inferred as free.
 
 ## Coverage notes
 
@@ -97,6 +120,6 @@ Response is GeoJSON `FeatureCollection` with `properties.status` and `properties
 
 ## Notes
 
-- This backend currently uses heuristic rule-building from meter + sign text.
-- To improve precision citywide, parse sign schedule grammar into structured day/time windows in `curb_rules`.
+- The parser supports structured weekday, overnight, noon, midnight, meter,
+  and anytime schedules, but additional NYC sign grammar still needs fixtures.
 - If NYC API rate limits you, set `NYC_APP_TOKEN` in `.env`.

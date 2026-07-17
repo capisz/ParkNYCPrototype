@@ -11,21 +11,36 @@ type SegmentEvidence = {
 type RuleInsert = ParsedRule & { segmentId: string };
 
 function rulesForSegment(row: SegmentEvidence): RuleInsert[] {
-  const parsed = (row.signs ?? [])
-    .map(text => parseParkingRule(text, "nyc-signs"))
+  const signRules = (row.signs ?? []).map(text => parseParkingRule(text, "nyc-signs"));
+  const parsed = signRules
     .filter(rule => rule.status !== "unknown")
     .map(rule => ({ ...rule, segmentId: row.id }));
 
+  const hasUnresolvedParkingSign = signRules.some(rule =>
+    rule.status === "unknown" && /NO |METER|PAY|PARKING|STANDING|STOPPING|BUS STOP|LOADING/.test(rule.reason.toUpperCase())
+  );
+  if (hasUnresolvedParkingSign) {
+    parsed.push({
+      segmentId: row.id, status: "unknown", dayMask: 127, startMinute: 0,
+      endMinute: 1440, confidence: 0.2,
+      reason: "One or more parking-related signs could not be resolved into a reliable schedule.",
+      source: "nyc-signs"
+    });
+  }
+
   if (row.has_meter) {
     const meter = parseParkingRule(`METER ${row.paid_hours ?? ""}`, "nyc-meters");
-    parsed.push({
-      ...meter,
-      segmentId: row.id,
-      status: "paid",
-      confidence: row.paid_hours ? Math.max(meter.confidence, 0.78) : 0.55,
+    parsed.push(meter.status === "paid" ? {
+      ...meter, segmentId: row.id, status: "paid",
+      confidence: Math.max(meter.confidence, 0.78),
+      reason: `Metered parking during ${row.paid_hours}.`
+    } : {
+      segmentId: row.id, status: "unknown", dayMask: 127, startMinute: 0,
+      endMinute: 1440, confidence: 0.2,
       reason: row.paid_hours
         ? `Metered parking during ${row.paid_hours}.`
-        : "NYC meter data confirms payment is required, but hours were not available."
+        : "NYC meter data confirms a meter, but its operating hours were unavailable.",
+      source: "nyc-meters"
     });
   }
 

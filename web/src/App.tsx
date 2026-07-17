@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl, { Map as MapLibreMap } from 'maplibre-gl'
-import type { Feature, FeatureCollection, LineString, Point } from 'geojson'
+import type { Feature, FeatureCollection, LineString, Point, Polygon } from 'geojson'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './App.css'
 import { countdown } from './countdown'
@@ -13,6 +13,34 @@ type Mode = 'street' | 'garage'
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] }
 const demoCenter: [number, number] = [-73.9855, 40.7484]
+const CURB_MIN_ZOOM = 16
+const HYDRANT_MIN_ZOOM = 19
+const MIN_PROXIMITY_RADIUS_METERS = 120
+const MAX_PROXIMITY_RADIUS_METERS = 1200
+
+function distanceMeters(a: [number, number], b: [number, number]): number {
+  const toRadians = (degrees: number) => degrees * Math.PI / 180
+  const latitude1 = toRadians(a[1])
+  const latitude2 = toRadians(b[1])
+  const deltaLatitude = latitude2 - latitude1
+  const deltaLongitude = toRadians(b[0] - a[0])
+  const value = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(latitude1) * Math.cos(latitude2) * Math.sin(deltaLongitude / 2) ** 2
+  return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value))
+}
+
+function proximityCircle(center: [number, number], radiusMeters: number): FeatureCollection<Polygon> {
+  const points: [number, number][] = []
+  const latitudeScale = 1 / 111320
+  const longitudeScale = 1 / (111320 * Math.cos(center[1] * Math.PI / 180))
+  for (let index = 0; index <= 64; index += 1) {
+    const angle = index / 64 * Math.PI * 2
+    points.push([
+      center[0] + Math.cos(angle) * radiusMeters * longitudeScale,
+      center[1] + Math.sin(angle) * radiusMeters * latitudeScale
+    ])
+  }
+  return { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Polygon', coordinates: [points] }, properties: {} }] }
+}
 
 function demoParking(): FeatureCollection<LineString, ParkingProperties> {
   const change = new Date(Date.now() + 38 * 60 * 1000).toISOString()
@@ -45,6 +73,7 @@ export default function App() {
   const mapRef = useRef<MapLibreMap | null>(null)
   const modeRef = useRef<Mode>('street')
   const selectedQueryRef = useRef('')
+  const viewportAbortRef = useRef<AbortController | null>(null)
   const [entered, setEntered] = useState(false)
   const [query, setQuery] = useState('')
   const [suggestions, setSuggestions] = useState<Place[]>([])
@@ -80,36 +109,90 @@ export default function App() {
   const loadViewport = useCallback(async () => {
     const map = mapRef.current
     if (!map?.getSource('parking')) return
+    viewportAbortRef.current?.abort()
+    const controller = new AbortController()
+    viewportAbortRef.current = controller
     const bounds = map.getBounds()
+    const zoom = map.getZoom()
+    const parkingSource = map.getSource('parking') as maplibregl.GeoJSONSource
+    const hydrantSource = map.getSource('hydrants') as maplibregl.GeoJSONSource
+    const proximitySource = map.getSource('proximity') as maplibregl.GeoJSONSource
+
+    if (modeRef.current === 'garage') {
+      parkingSource.setData(empty)
+      hydrantSource.setData(empty)
+      proximitySource.setData(empty)
+      setParking([])
+      const center = map.getCenter()
+      try {
+        const response = await fetch(`/api/garages/near?lat=${center.lat}&lng=${center.lng}&radius=1800`, { signal: controller.signal })
+        if (!response.ok) throw new Error('garages unavailable')
+        const payload = await response.json() as { facilities: Garage[] }
+        setGarages(payload.facilities)
+        ;(map.getSource('garages') as maplibregl.GeoJSONSource).setData(garageGeoJSON(payload.facilities))
+        setIsDemo(false)
+        setMessage(`${payload.facilities.length} known facilities near the map center`)
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        showDemo()
+      }
+      return
+    }
+
+    if (zoom < CURB_MIN_ZOOM) {
+      parkingSource.setData(empty)
+      hydrantSource.setData(empty)
+      proximitySource.setData(empty)
+      setParking([])
+      setSelected(null)
+      setIsDemo(false)
+      setMessage(`Zoom in to street level to load nearby parking guidance`)
+      return
+    }
+
+    const center = map.getCenter()
+    const centerCoordinates: [number, number] = [center.lng, center.lat]
+    const horizontalRadius = distanceMeters(centerCoordinates, [bounds.getEast(), center.lat])
+    const verticalRadius = distanceMeters(centerCoordinates, [center.lng, bounds.getNorth()])
+    const radiusMeters = Math.round(Math.min(MAX_PROXIMITY_RADIUS_METERS, Math.max(MIN_PROXIMITY_RADIUS_METERS, Math.min(horizontalRadius, verticalRadius) * .92)))
+    proximitySource.setData(proximityCircle(centerCoordinates, radiusMeters))
+
     try {
-      const response = await fetch(`/api/parking/viewport?minLat=${bounds.getSouth()}&minLng=${bounds.getWest()}&maxLat=${bounds.getNorth()}&maxLng=${bounds.getEast()}`)
+      const params = new URLSearchParams({
+        minLat: String(bounds.getSouth()), minLng: String(bounds.getWest()),
+        maxLat: String(bounds.getNorth()), maxLng: String(bounds.getEast()),
+        centerLat: String(center.lat), centerLng: String(center.lng),
+        radiusMeters: String(radiusMeters), zoom: String(zoom)
+      })
+      const response = await fetch(`/api/parking/viewport?${params}`, { signal: controller.signal })
       if (!response.ok) throw new Error('viewport unavailable')
       const data = await response.json() as FeatureCollection<LineString, ParkingProperties> & { returned: number; clipped: boolean }
-      ;(map.getSource('parking') as maplibregl.GeoJSONSource).setData(data)
+      parkingSource.setData(data)
       setParking(data.features)
       setIsDemo(false)
-      setMessage(`${data.returned} visible curb segments • ${data.clipped ? 'zoom in for complete detail' : 'live viewport'}`)
+      setMessage(`${data.returned} nearby curbs within ${radiusMeters} m • ${data.clipped ? 'zoom in for complete detail' : 'live proximity'}`)
 
-      if (map.getZoom() >= 18) {
-        const responseHydrants = await fetch(`/api/hydrants/viewport?minLat=${bounds.getSouth()}&minLng=${bounds.getWest()}&maxLat=${bounds.getNorth()}&maxLng=${bounds.getEast()}`)
-        if (responseHydrants.ok) (map.getSource('hydrants') as maplibregl.GeoJSONSource).setData(await responseHydrants.json())
-      } else (map.getSource('hydrants') as maplibregl.GeoJSONSource).setData(empty)
-
-      if (modeRef.current === 'garage') {
-        const center = map.getCenter()
-        const responseGarages = await fetch(`/api/garages/near?lat=${center.lat}&lng=${center.lng}&radius=1800`)
-        if (responseGarages.ok) {
-          const payload = await responseGarages.json() as { facilities: Garage[] }
-          setGarages(payload.facilities)
-          ;(map.getSource('garages') as maplibregl.GeoJSONSource).setData(garageGeoJSON(payload.facilities))
-        }
-      }
-    } catch { showDemo() }
+      if (zoom >= HYDRANT_MIN_ZOOM) {
+        const responseHydrants = await fetch(`/api/hydrants/viewport?minLat=${bounds.getSouth()}&minLng=${bounds.getWest()}&maxLat=${bounds.getNorth()}&maxLng=${bounds.getEast()}`, { signal: controller.signal })
+        if (responseHydrants.ok) hydrantSource.setData(await responseHydrants.json())
+      } else hydrantSource.setData(empty)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      showDemo()
+    }
   }, [showDemo])
 
   useEffect(() => {
     if (!entered || !container.current || mapRef.current) return
-    const map = new maplibregl.Map({ container: container.current, style: 'https://tiles.openfreemap.org/styles/positron', center: demoCenter, zoom: 15 })
+    const map = new maplibregl.Map({
+      container: container.current,
+      style: 'https://tiles.openfreemap.org/styles/positron',
+      center: demoCenter,
+      zoom: 15,
+      minZoom: 11.5,
+      maxZoom: 20,
+      maxBounds: [[-74.32, 40.45], [-73.65, 40.95]]
+    })
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
     let initialized = false
@@ -119,9 +202,26 @@ export default function App() {
         map.addSource('parking', { type: 'geojson', data: empty })
         map.addSource('hydrants', { type: 'geojson', data: empty })
         map.addSource('garages', { type: 'geojson', data: empty })
-        map.addLayer({ id: 'parking', type: 'line', source: 'parking', paint: { 'line-color': ['coalesce', ['get', 'color'], '#8D93A6'], 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 18, 9], 'line-opacity': .94 } })
-        map.addLayer({ id: 'hydrant-restrictions', type: 'line', source: 'hydrants', minzoom: 18, filter: ['==', ['get', 'kind'], 'hydrant_restriction'], paint: { 'line-color': '#D64545', 'line-width': 10, 'line-opacity': .95 } })
-        map.addLayer({ id: 'hydrants', type: 'circle', source: 'hydrants', minzoom: 18, filter: ['==', ['get', 'kind'], 'hydrant'], paint: { 'circle-radius': 7, 'circle-color': '#D64545', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } })
+        map.addSource('proximity', { type: 'geojson', data: empty })
+        map.addLayer({ id: 'proximity-fill', type: 'fill', source: 'proximity', minzoom: CURB_MIN_ZOOM, paint: { 'fill-color': '#b6d8f6', 'fill-opacity': .08 } })
+        map.addLayer({ id: 'proximity-line', type: 'line', source: 'proximity', minzoom: CURB_MIN_ZOOM, paint: { 'line-color': '#71819f', 'line-width': 2, 'line-opacity': .55, 'line-dasharray': [2, 2] } })
+        map.addLayer({ id: 'parking', type: 'line', source: 'parking', minzoom: CURB_MIN_ZOOM, paint: { 'line-color': ['coalesce', ['get', 'color'], '#8D93A6'], 'line-width': ['interpolate', ['linear'], ['zoom'], 16, 5, 20, 11], 'line-opacity': .94 } })
+        map.addLayer({ id: 'hydrant-restrictions', type: 'line', source: 'hydrants', minzoom: HYDRANT_MIN_ZOOM, filter: ['==', ['get', 'kind'], 'hydrant_restriction'], paint: { 'line-color': '#D64545', 'line-width': 10, 'line-opacity': .95 } })
+        const hydrantImage = new Image()
+        hydrantImage.onload = () => {
+          if (!map.hasImage('hydrant-icon')) map.addImage('hydrant-icon', hydrantImage)
+          if (!map.getLayer('hydrants')) map.addLayer({
+            id: 'hydrants', type: 'symbol', source: 'hydrants', minzoom: HYDRANT_MIN_ZOOM,
+            filter: ['==', ['get', 'kind'], 'hydrant'],
+            layout: {
+              'visibility': modeRef.current === 'street' ? 'visible' : 'none',
+              'icon-image': 'hydrant-icon',
+              'icon-size': ['interpolate', ['linear'], ['zoom'], 19, .18, 20, .25],
+              'icon-allow-overlap': true
+            }
+          })
+        }
+        hydrantImage.src = '/hydrant.png'
         map.addLayer({ id: 'garages', type: 'circle', source: 'garages', layout: { visibility: 'none' }, paint: { 'circle-radius': 10, 'circle-color': '#59657D', 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 } })
       } catch (error) {
         console.error('Map overlay initialization failed', error)
@@ -142,7 +242,7 @@ export default function App() {
       if (initialized) window.clearInterval(readyTimer)
     }, 100)
     map.on('moveend', () => void loadViewport())
-    return () => { window.clearInterval(readyTimer); map.remove(); mapRef.current = null }
+    return () => { viewportAbortRef.current?.abort(); window.clearInterval(readyTimer); map.remove(); mapRef.current = null }
   }, [entered, loadViewport])
 
   useEffect(() => {
@@ -151,7 +251,9 @@ export default function App() {
     const map = mapRef.current
     if (!map?.isStyleLoaded()) return
     map.setLayoutProperty('parking', 'visibility', mode === 'street' ? 'visible' : 'none')
-    map.setLayoutProperty('hydrants', 'visibility', mode === 'street' ? 'visible' : 'none')
+    map.setLayoutProperty('proximity-fill', 'visibility', mode === 'street' ? 'visible' : 'none')
+    map.setLayoutProperty('proximity-line', 'visibility', mode === 'street' ? 'visible' : 'none')
+    if (map.getLayer('hydrants')) map.setLayoutProperty('hydrants', 'visibility', mode === 'street' ? 'visible' : 'none')
     map.setLayoutProperty('hydrant-restrictions', 'visibility', mode === 'street' ? 'visible' : 'none')
     map.setLayoutProperty('garages', 'visibility', mode === 'garage' ? 'visible' : 'none')
     void loadViewport()
@@ -204,11 +306,10 @@ export default function App() {
       <h1>Pidge</h1>
       <button onClick={() => {
         setEntered(true)
-        const data = demoParking()
-        setParking(data.features as ParkingFeature[])
-        setGarages(demoGarages)
-        setIsDemo(true)
-        setMessage('Preview mode • connect PostgreSQL for live NYC curb classifications')
+        setParking([])
+        setGarages([])
+        setIsDemo(false)
+        setMessage('Zoom in to street level to load nearby parking guidance')
       }}>Continue as guest</button>
     </section>
   </main>

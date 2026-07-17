@@ -34,10 +34,23 @@ xcodebuild \
   framework is version `1051.54.0`, while Xcode expects `1051.55.0`. Generic
   simulator builds still succeed. Updating macOS/Xcode's simulator components
   is required before install, launch, and native screenshot capture.
-- PostgreSQL does not allow passwordless access for the current macOS user or
-  `pidge_app`. Add a rotated `DATABASE_URL` to ignored `backend/.env` before
-  running migrations, health checks, or ingestion. Previously shared database
-  and Socrata credentials must not be reused.
+- The administrator-owned PostgreSQL server on port `5432` cannot be managed by
+  this macOS account. Pidge now uses an isolated, user-owned PostgreSQL 18 and
+  PostGIS 3.6 cluster on `127.0.0.1:55432` instead.
+
+## Live data recovery
+
+Verified on 2026-07-17 without reusing previously shared credentials:
+
+- `114,853` curb segments.
+- `246,697` parsed curb rules.
+- `235,551` parking sign rows after source-key deduplication.
+- `11,156` meter rows after source-key deduplication.
+- Live NYCDEP hydrants return curb-snapped 15-foot restriction segments.
+- A Midtown proximity query returns database-backed `no_parking`, `paid`,
+  evidence-backed `free`, and conservative `unknown` classifications.
+- City-scale curb queries are rejected; clients load circular street-level
+  scopes and reveal hydrants only at block-level zoom.
 
 ## Recovery commands
 
@@ -46,13 +59,12 @@ git clone https://github.com/capisz/ParkNYCPrototype.git
 cd ParkNYCPrototype
 git switch -c codex/revival-mvp
 
-cp backend/.env.example backend/.env
-# Set a newly issued DATABASE_URL. NYC_APP_TOKEN is optional for local recovery.
-
-cd backend
-npm ci
-npm run migrate
-npm run dev
+npm install
+npm install --prefix backend
+npm install --prefix web
+npm run db:bootstrap
+npm --prefix backend run ingest:all
+npm run dev:live
 ```
 
 After database access is configured, verify:

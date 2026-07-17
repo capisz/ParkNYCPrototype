@@ -2,7 +2,12 @@
   "name": "pidge",
   "private": true,
   "scripts": {
+    "db:bootstrap": "backend/scripts/user-postgres.sh bootstrap",
+    "db:start": "backend/scripts/user-postgres.sh start",
+    "db:status": "backend/scripts/user-postgres.sh status",
+    "db:stop": "backend/scripts/user-postgres.sh stop",
     "dev": "concurrently -n api,web -c blue,cyan \"npm --prefix backend run dev\" \"npm --prefix web run dev -- --host 127.0.0.1\"",
+    "dev:live": "npm run db:start && npm run dev",
     "dev:preview": "DATABASE_URL=postgresql://preview:preview@127.0.0.1:5432/pidge_parking npm run dev",
     "build": "npm --prefix backend run build && npm --prefix web run build",
     "test": "npm --prefix backend test && npm --prefix web run test --if-present"

@@ -14,6 +14,7 @@ final class CurbViewModel: ObservableObject {
     private let defaultRadiusMeters = 550
     private let minimumRadiusMeters = 180
     private let maximumRadiusMeters = 1200
+    private let maximumStreetDataShortEdgeMeters: Double = 2600
     private let backendAugmentThreshold = 20
     private let minimumRefreshDistanceMeters: Double = 120
     private let minimumRefreshInterval: TimeInterval = 8
@@ -39,6 +40,12 @@ final class CurbViewModel: ObservableObject {
 
     func refresh(in region: MKCoordinateRegion, force: Bool = false) {
         guard CLLocationCoordinate2DIsValid(region.center) else { return }
+        if visibleShortEdgeMeters(for: region) > maximumStreetDataShortEdgeMeters {
+            refreshTask?.cancel()
+            segments = []
+            sourceLabel = "Zoom in to street level"
+            return
+        }
         let radius = inferredVisibleRadiusMeters(for: region)
         refresh(
             center: region.center,
@@ -183,14 +190,18 @@ final class CurbViewModel: ObservableObject {
     }
 
     private func inferredVisibleRadiusMeters(for region: MKCoordinateRegion) -> Int {
+        let visibleCircleRadius = visibleShortEdgeMeters(for: region) / 2
+        let padded = visibleCircleRadius + 40
+        let clamped = max(Double(minimumRadiusMeters), min(Double(maximumRadiusMeters), padded))
+        return Int(clamped.rounded(.up))
+    }
+
+    private func visibleShortEdgeMeters(for region: MKCoordinateRegion) -> Double {
         let latMeters = max(region.span.latitudeDelta, 0.001) * 111_320
         let latRadians = region.center.latitude * .pi / 180
         let lonScale = max(cos(latRadians), 0.2)
         let lonMeters = max(region.span.longitudeDelta, 0.001) * 111_320 * lonScale
-        let visibleCircleRadius = min(latMeters, lonMeters) / 2
-        let padded = visibleCircleRadius + 40
-        let clamped = max(Double(minimumRadiusMeters), min(Double(maximumRadiusMeters), padded))
-        return Int(clamped.rounded(.up))
+        return min(latMeters, lonMeters)
     }
 
     private func regionAround(coordinate: CLLocationCoordinate2D, radiusMeters: Double) -> MKCoordinateRegion {
