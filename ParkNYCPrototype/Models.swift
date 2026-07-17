@@ -45,11 +45,12 @@ struct CurbSegment: Identifiable {
     let confidence: Double
     let ruleSummary: String
     let sourceFreshness: String?
+    let sourceName: String?
 
     init(name: String, coordinates: [CLLocationCoordinate2D], status: ParkingStatus,
          explanation: String, isMeteredLikely: Bool, nextChange: Date?,
          paidHoursText: String?, rateText: String?, confidence: Double = 0.25,
-         ruleSummary: String? = nil, sourceFreshness: String? = nil) {
+         ruleSummary: String? = nil, sourceFreshness: String? = nil, sourceName: String? = nil) {
         self.name = name
         self.coordinates = coordinates
         self.status = status
@@ -61,6 +62,7 @@ struct CurbSegment: Identifiable {
         self.confidence = confidence
         self.ruleSummary = ruleSummary ?? explanation
         self.sourceFreshness = sourceFreshness
+        self.sourceName = sourceName
     }
 }
 

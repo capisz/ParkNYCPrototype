@@ -5,8 +5,10 @@ type ParkingStatus = "free" | "paid" | "no_parking" | "unknown";
 
 type LocalTimeWindow = {
   weekday: string;
+  dayIndex: number;
   minuteOfDay: number;
   dayBit: number;
+  previousDayBit: number;
 };
 
 type ViewportInput = {
@@ -29,6 +31,11 @@ type DbViewportRow = {
   status: string | null;
   confidence: number | string | null;
   reason: string | null;
+  rule_source: string | null;
+  day_mask: number | null;
+  start_minute: number | null;
+  end_minute: number | null;
+  source_freshness: Date | string | null;
   geometry: unknown;
   total_count: number;
 };
@@ -49,6 +56,7 @@ type ViewportFeature = {
     confidence: number;
     reason: string | null;
     ruleSummary: string;
+    source: string | null;
     nextChange: string | null;
     sourceFreshness: string | null;
     onStreet: string | null;
@@ -108,7 +116,42 @@ function getLocalTimeWindow(asOf: Date, timezone: string): LocalTimeWindow {
   const dayIdx = DAY_INDEX[weekday] ?? 0;
   const dayBit = 1 << dayIdx;
 
-  return { weekday, minuteOfDay, dayBit };
+  const previousDayBit = 1 << ((dayIdx + 6) % 7);
+  return { weekday, dayIndex: dayIdx, minuteOfDay, dayBit, previousDayBit };
+}
+
+function timezoneOffsetMs(date: Date, timezone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+  }).formatToParts(date);
+  const value = (type: string) => Number(parts.find(part => part.type === type)?.value ?? 0);
+  const hour = value("hour") === 24 ? 0 : value("hour");
+  return Date.UTC(value("year"), value("month") - 1, value("day"), hour, value("minute"), value("second")) - date.getTime();
+}
+
+function zonedDate(reference: Date, timezone: string, dayOffset: number, minute: number): Date {
+  const local = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(reference);
+  const value = (type: string) => Number(local.find(part => part.type === type)?.value ?? 0);
+  const wallClock = Date.UTC(value("year"), value("month") - 1, value("day") + dayOffset, Math.floor(minute / 60), minute % 60);
+  let candidate = new Date(wallClock);
+  candidate = new Date(wallClock - timezoneOffsetMs(candidate, timezone));
+  return candidate;
+}
+
+function nextRuleBoundary(row: DbViewportRow, asOf: Date, window: LocalTimeWindow): string | null {
+  if (row.end_minute == null || row.day_mask == null || row.status == null) return null;
+  const overnight = (row.start_minute ?? 0) > row.end_minute;
+  const dayOffset = overnight && window.minuteOfDay >= (row.start_minute ?? 0) ? 1 : 0;
+  const boundary = zonedDate(
+    asOf,
+    config.timezone,
+    dayOffset + (row.end_minute === 1440 ? 1 : 0),
+    row.end_minute === 1440 ? 0 : row.end_minute
+  );
+  return boundary > asOf ? boundary.toISOString() : null;
 }
 
 function normalizeStatus(raw: string | null | undefined): ParkingStatus {
@@ -180,6 +223,7 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
         s.side_of_street,
         s.paid_hours,
         s.meter_rate,
+        s.updated_at,
         s.geom
       FROM curb_segments s
       JOIN bbox b ON ST_Intersects(s.geom, b.geom)
@@ -190,6 +234,10 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
         r.status,
         r.confidence,
         r.reason,
+        r.source,
+        r.day_mask,
+        r.start_minute,
+        r.end_minute,
         ROW_NUMBER() OVER (
           PARTITION BY c.id
           ORDER BY
@@ -205,12 +253,13 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
       FROM candidates c
       LEFT JOIN curb_rules r
         ON r.curb_segment_id = c.id
-       AND (r.day_mask & $5) <> 0
        AND (
-         (r.start_minute < r.end_minute AND $6 >= r.start_minute AND $6 < r.end_minute)
-         OR (r.start_minute > r.end_minute AND ($6 >= r.start_minute OR $6 < r.end_minute))
-         OR (r.start_minute = 0 AND r.end_minute = 1440)
-         OR (r.start_minute = r.end_minute)
+         (r.start_minute < r.end_minute AND (r.day_mask & $5) <> 0 AND $7 >= r.start_minute AND $7 < r.end_minute)
+         OR (r.start_minute > r.end_minute AND (
+           ((r.day_mask & $5) <> 0 AND $7 >= r.start_minute)
+           OR ((r.day_mask & $6) <> 0 AND $7 < r.end_minute)
+         ))
+         OR (r.start_minute = 0 AND r.end_minute = 1440 AND (r.day_mask & $5) <> 0)
        )
     ),
     selected AS (
@@ -226,6 +275,11 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
         COALESCE(ar.status, 'unknown') AS status,
         COALESCE(ar.confidence, 0.25)::float8 AS confidence,
         ar.reason,
+        ar.source AS rule_source,
+        ar.day_mask,
+        ar.start_minute,
+        ar.end_minute,
+        c.updated_at AS source_freshness,
         ST_AsGeoJSON(c.geom)::jsonb AS geometry
       FROM candidates c
       LEFT JOIN active_rules ar
@@ -244,6 +298,11 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
       status,
       confidence,
       reason,
+      rule_source,
+      day_mask,
+      start_minute,
+      end_minute,
+      source_freshness,
       geometry,
       COUNT(*) OVER ()::int AS total_count
     FROM selected
@@ -252,9 +311,9 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
       from_street NULLS LAST,
       to_street NULLS LAST,
       segment_id
-    LIMIT $7
+    LIMIT $8
     `,
-    [input.minLng, input.minLat, input.maxLng, input.maxLat, window.dayBit, window.minuteOfDay, config.viewportMaxSegments]
+    [input.minLng, input.minLat, input.maxLng, input.maxLat, window.dayBit, window.previousDayBit, window.minuteOfDay, config.viewportMaxSegments]
   );
 
   const summary: ViewportSummary = {
@@ -290,8 +349,9 @@ export async function getViewportParking(input: ViewportInput): Promise<Viewport
         confidence: parseConfidence(row.confidence),
         reason: row.reason,
         ruleSummary: row.reason ?? "Parking status is unknown because no active, reliable rule matched this curb.",
-        nextChange: null,
-        sourceFreshness: null,
+        source: row.rule_source,
+        nextChange: nextRuleBoundary(row, asOf, window),
+        sourceFreshness: row.source_freshness ? new Date(row.source_freshness).toISOString() : null,
         onStreet: row.on_street,
         fromStreet: row.from_street,
         toStreet: row.to_street,

@@ -27,3 +27,7 @@ npm run dev
 
 The API listens on `http://127.0.0.1:8080` and the browser client on the Vite
 URL printed in the terminal. Run `npm test` and `npm run build` before pushing.
+
+To inspect the interactive UI before database credentials are configured, run
+`npm run dev:preview`. The browser clearly labels simulated curb lines as
+preview data while NYC search, garage, and hydrant proxy routes remain live.

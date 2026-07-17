@@ -162,7 +162,8 @@ final class BackendParkingService {
             rateText: rateText,
             confidence: feature.properties.confidence ?? 0.25,
             ruleSummary: explanation,
-            sourceFreshness: feature.properties.sourceFreshness
+            sourceFreshness: feature.properties.sourceFreshness,
+            sourceName: feature.properties.source
         )
     }
 
@@ -296,6 +297,7 @@ private struct BackendProperties: Decodable {
     let ruleSummary: String?
     let nextChange: String?
     let sourceFreshness: String?
+    let source: String?
     let onStreet: String?
     let fromStreet: String?
     let toStreet: String?

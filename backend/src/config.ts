@@ -28,7 +28,7 @@ export const config = {
   nycMeterDatasetId: process.env.NYC_METER_DATASET_ID ?? "e7yp-wx55",
   nycSignsDatasetId: process.env.NYC_SIGNS_DATASET_ID ?? "nfid-uabd",
   nycGeometryDatasetId: process.env.NYC_GEOMETRY_DATASET_ID ?? "6yyb-pb25",
-  nycHydrantDatasetId: process.env.NYC_HYDRANT_DATASET_ID ?? "6pui-xhxz",
+  nycHydrantDatasetId: process.env.NYC_HYDRANT_DATASET_ID ?? "5bgh-vtsn",
   nycGarageDatasetId: process.env.NYC_GARAGE_DATASET_ID ?? "ptfx-m7u5",
   geoSearchBaseUrl: process.env.GEOSEARCH_BASE_URL ?? "https://geosearch.planninglabs.nyc/v2",
   nycPageLimit: toInt(process.env.NYC_PAGE_LIMIT, 5000),
