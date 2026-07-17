@@ -79,7 +79,7 @@ export default function App() {
 
   const loadViewport = useCallback(async () => {
     const map = mapRef.current
-    if (!map?.isStyleLoaded()) return
+    if (!map?.getSource('parking')) return
     const bounds = map.getBounds()
     try {
       const response = await fetch(`/api/parking/viewport?minLat=${bounds.getSouth()}&minLng=${bounds.getWest()}&maxLat=${bounds.getNorth()}&maxLng=${bounds.getEast()}`)
@@ -117,12 +117,12 @@ export default function App() {
       if (initialized || !map.getStyle()) return
       try {
         map.addSource('parking', { type: 'geojson', data: empty })
-      map.addSource('hydrants', { type: 'geojson', data: empty })
-      map.addSource('garages', { type: 'geojson', data: empty })
-      map.addLayer({ id: 'parking', type: 'line', source: 'parking', paint: { 'line-color': ['coalesce', ['get', 'color'], '#8D93A6'], 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 18, 9], 'line-opacity': .94 } })
-      map.addLayer({ id: 'hydrant-restrictions', type: 'line', source: 'hydrants', minzoom: 18, filter: ['==', ['get', 'kind'], 'hydrant_restriction'], paint: { 'line-color': '#D64545', 'line-width': 10, 'line-opacity': .95 } })
-      map.addLayer({ id: 'hydrants', type: 'circle', source: 'hydrants', minzoom: 18, filter: ['==', ['get', 'kind'], 'hydrant'], paint: { 'circle-radius': 7, 'circle-color': '#D64545', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } })
-      map.addLayer({ id: 'garages', type: 'circle', source: 'garages', layout: { visibility: 'none' }, paint: { 'circle-radius': 10, 'circle-color': '#59657D', 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 } })
+        map.addSource('hydrants', { type: 'geojson', data: empty })
+        map.addSource('garages', { type: 'geojson', data: empty })
+        map.addLayer({ id: 'parking', type: 'line', source: 'parking', paint: { 'line-color': ['coalesce', ['get', 'color'], '#8D93A6'], 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 18, 9], 'line-opacity': .94 } })
+        map.addLayer({ id: 'hydrant-restrictions', type: 'line', source: 'hydrants', minzoom: 18, filter: ['==', ['get', 'kind'], 'hydrant_restriction'], paint: { 'line-color': '#D64545', 'line-width': 10, 'line-opacity': .95 } })
+        map.addLayer({ id: 'hydrants', type: 'circle', source: 'hydrants', minzoom: 18, filter: ['==', ['get', 'kind'], 'hydrant'], paint: { 'circle-radius': 7, 'circle-color': '#D64545', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } })
+        map.addLayer({ id: 'garages', type: 'circle', source: 'garages', layout: { visibility: 'none' }, paint: { 'circle-radius': 10, 'circle-color': '#59657D', 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 } })
       } catch (error) {
         console.error('Map overlay initialization failed', error)
         return
