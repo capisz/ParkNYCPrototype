@@ -2,6 +2,8 @@
 
 Baseline date: 2026-07-16
 
+> Historical recovery record only. The public-pilot safety audit supersedes the classifications, hydrant geometry, health route, and unversioned API commands below. Do not use this file as current operational guidance; see [the pilot implementation status](./pilot-readiness/IMPLEMENTATION_STATUS.md).
+
 ## Recovered revision
 
 - Repository: `capisz/ParkNYCPrototype`

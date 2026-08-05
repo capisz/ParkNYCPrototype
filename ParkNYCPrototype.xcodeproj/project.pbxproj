@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		84EE76412F03636D00976F66 /* VisionKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 84EE76402F03636D00976F66 /* VisionKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,10 +27,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		84EE75FD2F005C1800976F66 /* ParkNYCPrototype.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = ParkNYCPrototype.app; path = Pidge.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		84EE75FD2F005C1800976F66 /* NYC Parking Planner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "NYC Parking Planner.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		84EE760C2F005C1900976F66 /* ParkNYCPrototypeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ParkNYCPrototypeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		84EE76162F005C1900976F66 /* ParkNYCPrototypeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ParkNYCPrototypeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		84EE76402F03636D00976F66 /* VisionKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VisionKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.2.sdk/System/Library/Frameworks/VisionKit.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -57,7 +55,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				84EE76412F03636D00976F66 /* VisionKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -92,7 +89,7 @@
 		84EE75FE2F005C1800976F66 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				84EE75FD2F005C1800976F66 /* ParkNYCPrototype.app */,
+				84EE75FD2F005C1800976F66 /* NYC Parking Planner.app */,
 				84EE760C2F005C1900976F66 /* ParkNYCPrototypeTests.xctest */,
 				84EE76162F005C1900976F66 /* ParkNYCPrototypeUITests.xctest */,
 			);
@@ -102,7 +99,6 @@
 		84EE763F2F03636C00976F66 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				84EE76402F03636D00976F66 /* VisionKit.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -129,7 +125,7 @@
 			packageProductDependencies = (
 			);
 			productName = ParkNYCPrototype;
-			productReference = 84EE75FD2F005C1800976F66 /* ParkNYCPrototype.app */;
+			productReference = 84EE75FD2F005C1800976F66 /* NYC Parking Planner.app */;
 			productType = "com.apple.product-type.application";
 		};
 		84EE760B2F005C1900976F66 /* ParkNYCPrototypeTests */ = {
@@ -409,13 +405,12 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 					GENERATE_INFOPLIST_FILE = YES;
-					INFOPLIST_KEY_CFBundleDisplayName = Pidge;
-					INFOPLIST_KEY_CFBundleName = Pidge;
+					INFOPLIST_KEY_CFBundleDisplayName = "NYC Parking Planner";
+					INFOPLIST_KEY_CFBundleName = "NYC Parking Planner";
 					INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
-					INFOPLIST_KEY_NSCameraUsageDescription = "We use the camera to scan posted parking signs for rule text.";
-					INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Pidge uses your local network connection to reach your parking backend.";
-					INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We use your location to show nearby legal curb parking guidance.";
-					INFOPLIST_KEY_ParkingBackendBaseURL = "http://127.0.0.1:8080";
+					INFOPLIST_KEY_NSLocalNetworkUsageDescription = "NYC Parking Planner uses your local network only for development backend testing.";
+					INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "NYC Parking Planner uses your location only after you choose Use My Location.";
+					INFOPLIST_KEY_ParkingBackendBaseURL = "$(PARKING_BACKEND_BASE_URL)";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -426,13 +421,14 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = chriszcodes.ParkNYCPrototype;
-				PRODUCT_NAME = Pidge;
+				PARKING_BACKEND_BASE_URL = "http://127.0.0.1:8080";
+				PRODUCT_NAME = "NYC Parking Planner";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -458,13 +454,10 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 					GENERATE_INFOPLIST_FILE = YES;
-					INFOPLIST_KEY_CFBundleDisplayName = Pidge;
-					INFOPLIST_KEY_CFBundleName = Pidge;
-					INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
-					INFOPLIST_KEY_NSCameraUsageDescription = "We use the camera to scan posted parking signs for rule text.";
-					INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Pidge uses your local network connection to reach your parking backend.";
-					INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We use your location to show nearby legal curb parking guidance.";
-					INFOPLIST_KEY_ParkingBackendBaseURL = "http://127.0.0.1:8080";
+					INFOPLIST_KEY_CFBundleDisplayName = "NYC Parking Planner";
+					INFOPLIST_KEY_CFBundleName = "NYC Parking Planner";
+					INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "NYC Parking Planner uses your location only after you choose Use My Location.";
+					INFOPLIST_KEY_ParkingBackendBaseURL = "$(PARKING_BACKEND_BASE_URL)";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -475,13 +468,14 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = chriszcodes.ParkNYCPrototype;
-				PRODUCT_NAME = Pidge;
+				PARKING_BACKEND_BASE_URL = "";
+				PRODUCT_NAME = "NYC Parking Planner";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -503,7 +497,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = chriszcodes.ParkNYCPrototypeTests;
@@ -516,7 +510,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ParkNYCPrototype.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ParkNYCPrototype";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NYC Parking Planner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NYC Parking Planner";
 				XROS_DEPLOYMENT_TARGET = 26.2;
 			};
 			name = Debug;
@@ -528,7 +522,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = chriszcodes.ParkNYCPrototypeTests;
@@ -541,7 +535,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ParkNYCPrototype.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ParkNYCPrototype";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NYC Parking Planner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NYC Parking Planner";
 				XROS_DEPLOYMENT_TARGET = 26.2;
 			};
 			name = Release;
@@ -552,7 +546,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = chriszcodes.ParkNYCPrototypeUITests;
@@ -576,7 +570,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = chriszcodes.ParkNYCPrototypeUITests;

@@ -1,39 +1,40 @@
-# Container Diagram
+# Container diagram
 
 ```mermaid
 C4Container
-title Pidge - Container Diagram
+title NYC Parking Planner - Public Pilot Containers
 
-Person(driver, "Driver", "Mobile user")
+Person(traveler, "Traveler", "Anonymous web or iOS user")
 
-System_Ext(mapkit, "Apple MapKit", "Search, geocoding, map + POI services")
-System_Ext(nyc, "NYC Open Data (Socrata)", "e7yp-wx55, nfid-uabd, 6yyb-pb25, 5bgh-vtsn")
-System_Ext(firebase, "Firebase Auth (Optional)", "Identity provider")
+System_Ext(citydata, "NYC DOT and NYC Open Data", "Parking evidence and approved curb geometry")
+System_Ext(dcwp, "NYC DCWP", "Issued Licenses dataset")
+System_Ext(mta, "MTA", "GTFS, realtime, alerts, and accessibility feeds")
+System_Ext(mapping, "Mapping and geocoding providers", "Search, basemap, and street-routing inputs")
 
-System_Boundary(pidge, "Pidge Platform") {
-  Container(ios_ui, "iOS UI + Map Orchestrator", "SwiftUI/MapKit", "Landing/auth/results screens, colored curb lines, hydrant overlays, garage list")
-  Container(ios_data, "iOS Data Services", "Swift", "CurbViewModel, BackendParkingService, GarageSearchService, NYCParkingOpenDataService, NYCHydrantService")
-  Container(ios_auth, "Auth Session Manager", "Swift", "Firebase auth or local fallback logic")
-  ContainerDb(local_store, "Local Credential Store", "Keychain + UserDefaults", "Fallback account/session persistence")
-
-  Container(api, "Parking API", "Node.js/Express", "GET /api/parking/viewport, /health")
-  Container(etl, "Ingestion + Rule Builder Jobs", "Node.js/TypeScript", "ingest:geometry/meters/signs + rebuildRules")
-  ContainerDb(pg, "Parking Database", "PostgreSQL + PostGIS", "curb_segments, curb_rules, raw ingestion tables")
+System_Boundary(planner, "NYC Parking Planner") {
+  Container(web, "Web client", "React / MapLibre", "Destination-first planner, interval controls, advisory map, policy pages")
+  Container(ios, "iOS client", "SwiftUI / MapKit", "iOS 17+ destination-first planner using the versioned backend contract")
+  Container(api, "Versioned planning API", "Node.js / Express", "Plans, curb GeoJSON, licensed facilities, freshness, liveness, and protected readiness")
+  Container(ingestion, "Snapshot ingestion", "Node.js / TypeScript", "Stages, validates, checksums, atomically publishes, expires deleted rows, and records source metadata")
+  ContainerDb(postgis, "Parking evidence database", "PostgreSQL / PostGIS", "Snapshots, curb evidence, interpretation versions, stewardship decisions, and rollback metadata")
+  Container(otp, "Transit routing service", "OpenTripPlanner 2.9", "Isolated and disabled until MTA, realtime, return-trip, and accessibility gates pass")
+  Container(ops, "Operations controls", "City-managed platform", "Secrets, WAF, observability, alerts, deployment rollback, and dataset kill switches")
 }
 
-Rel(driver, ios_ui, "Searches destination and views parking state")
-Rel(ios_ui, ios_data, "Requests curb/garage/hydrant data")
-Rel(ios_ui, ios_auth, "Uses login/session state")
-Rel(ios_auth, firebase, "Sign up/login/sign out", "Firebase SDK")
-Rel(ios_auth, local_store, "Stores fallback credentials/session", "Keychain/UserDefaults")
-
-Rel(ios_data, mapkit, "Autocomplete, destination lookup, garage POI search", "MapKit APIs")
-Rel(ios_data, api, "Viewport parking query", "HTTPS JSON")
-Rel_Back(api, ios_data, "GeoJSON features + status/confidence")
-
-Rel(ios_data, nyc, "Fallback meter/sign fetch + hydrant fetch", "HTTPS (Socrata)")
-Rel(etl, nyc, "Bulk dataset ingestion", "HTTPS (Socrata)")
-Rel(etl, pg, "Upserts geometry/meters/signs and builds rules", "SQL")
-Rel(api, pg, "Spatial/time-window rule query", "SQL + PostGIS")
+Rel(traveler, web, "Plans and reviews advisory options")
+Rel(traveler, ios, "Plans and reviews advisory options")
+Rel(web, api, "Uses /api/v1 contracts", "HTTPS JSON / GeoJSON")
+Rel(ios, api, "Uses /api/v1 contracts", "HTTPS JSON / GeoJSON")
+Rel(web, mapping, "Renders the basemap")
+Rel(ios, mapping, "Searches and renders destinations", "Platform SDK")
+Rel(api, postgis, "Queries fresh, approved, interval-aware evidence", "SQL / PostGIS")
+Rel(ingestion, citydata, "Fetches parking snapshots", "Server-side HTTPS")
+Rel(ingestion, dcwp, "Fetches active license snapshots", "Server-side HTTPS")
+Rel(ingestion, postgis, "Publishes validated snapshots atomically", "SQL")
+Rel(api, otp, "Requests round-trip multimodal routes only when enabled", "GraphQL")
+Rel(otp, mta, "Consumes official schedules and realtime feeds", "City infrastructure")
+Rel(ops, api, "Operates feature flags and readiness controls")
+Rel(ops, ingestion, "Monitors freshness and data-quality gates")
 ```
 
+The clients never call MTA directly and never fall back to client-side parking-rule interpretation.

@@ -1,5 +1,5 @@
 {
-  "name": "pidge",
+  "name": "nyc-parking-planner",
   "private": true,
   "scripts": {
     "db:bootstrap": "backend/scripts/user-postgres.sh bootstrap",

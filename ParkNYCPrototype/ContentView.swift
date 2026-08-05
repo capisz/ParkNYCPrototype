@@ -8,16 +8,22 @@ private enum AppStage {
     case results
 }
 
-private enum ParkingMode: String, CaseIterable, Identifiable {
-    case street = "Street"
-    case garages = "Garages"
-
-    var id: String { rawValue }
+private enum MapOverlayState {
+    case collapsed
+    case browsing
+    case selected
 }
 
-private enum AuthFormMode: String, CaseIterable, Identifiable {
-    case login = "Log In"
-    case signUp = "Sign Up"
+private enum MapSheetPosition: Int, CaseIterable {
+    case minimized
+    case half
+    case expanded
+}
+
+private enum ParkingMode: String, CaseIterable, Identifiable {
+    case best = "Best"
+    case street = "Street"
+    case garages = "Garages"
 
     var id: String { rawValue }
 }
@@ -35,24 +41,74 @@ private enum AppTheme {
     static let softSurface = Color.white.opacity(0.72)
 }
 
+private struct BestRecommendationMarker: View {
+    let color: Color
+    let isBest: Bool
+    let isSelected: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    var body: some View {
+        ZStack {
+            if isBest {
+                Circle()
+                    .stroke(color.opacity(0.9), lineWidth: 4)
+                    .frame(width: 38, height: 38)
+                    .scaleEffect(pulse ? 1.55 : 0.72)
+                    .opacity(pulse ? 0.05 : 0.75)
+            }
+
+            Circle()
+                .fill(Color.white)
+                .frame(width: isSelected ? 34 : 30, height: isSelected ? 34 : 30)
+            Circle()
+                .fill(color)
+                .frame(width: isSelected ? 24 : 20, height: isSelected ? 24 : 20)
+
+            if isBest {
+                Text("BEST")
+                    .font(.system(size: 8, weight: .black))
+                    .tracking(0.7)
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(AppTheme.ink, in: Capsule())
+                    .offset(y: -29)
+            }
+        }
+        .frame(width: 58, height: 58)
+        .shadow(color: AppTheme.ink.opacity(0.22), radius: 4, y: 2)
+        .onAppear {
+            guard isBest, !reduceMotion else { return }
+            withAnimation(.easeOut(duration: 1.5).repeatForever(autoreverses: false)) {
+                pulse = true
+            }
+        }
+    }
+}
+
 struct ContentView: View {
     @StateObject private var locationManager = LocationManager()
     @StateObject private var curbVM = CurbViewModel()
-    @StateObject private var authSession = AuthSessionManager()
     @StateObject private var locationSuggestions = LocationSuggestionsStore()
 
-    private let garageService = GarageSearchService()
-    private let hydrantService = NYCHydrantService()
+    private let facilityService = BackendParkingService()
+    private let recommendationService = BackendParkingService()
+    private let hydrantService = BackendParkingService()
     private let liveRefreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
     private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     @State private var appStage: AppStage = .landing
-    @State private var mode: ParkingMode = .street
-    @State private var showOptionsList = true
+    @State private var mode: ParkingMode = .best
+    @State private var mapOverlayState: MapOverlayState = .collapsed
+    @State private var mapSheetPosition: MapSheetPosition = .half
+    @State private var mapSheetDragOffset: CGFloat = 0
 
     @State private var searchText: String = ""
     @State private var searchStatus: String? = nil
     @State private var isSearchingDestination = false
+    @State private var isWaitingForCurrentLocation = false
     @State private var pendingSuggestion: MKLocalSearchCompletion?
 
     @State private var destinationName: String = ""
@@ -60,11 +116,21 @@ struct ContentView: View {
     @State private var mapCenterCoordinate: CLLocationCoordinate2D?
     @State private var mapVisibleRegion: MKCoordinateRegion?
     @State private var countdownNow: Date = Date()
-    @State private var derivedNextChangeBySegmentID: [UUID: Date] = [:]
+    @State private var arrivalDate: Date = Date().addingTimeInterval(15 * 60)
+    @State private var departureDate: Date = Date().addingTimeInterval(2 * 60 * 60)
+    @State private var maxWalkMinutes = 10
+    @State private var allowPaidParking = true
+    @State private var allowGarages = true
 
     @State private var position: MapCameraPosition = .automatic
 
     @State private var selectedStreet: CurbSegment?
+    @State private var recommendations: [ParkingRecommendation] = []
+    @State private var selectedRecommendation: ParkingRecommendation?
+    @State private var recommendationAvailability: ParkingAvailability?
+    @State private var recommendationStatus: String?
+    @State private var isLoadingRecommendations = false
+    @State private var recommendationTask: Task<Void, Never>?
 
     @State private var garages: [GarageOption] = []
     @State private var selectedGarage: GarageOption?
@@ -78,13 +144,6 @@ struct ContentView: View {
     @State private var lastHydrantFetchRadiusMeters: Int?
     @State private var hydrantVisibilityShortEdgeThresholdMeters: Double?
 
-    @State private var authMode: AuthFormMode = .login
-    @State private var authName: String = ""
-    @State private var authEmail: String = ""
-    @State private var authPassword: String = ""
-    @State private var authStatus: String? = nil
-
-    @State private var authCardVisible = false
     @State private var landingCardVisible = false
 
     private let hydrantZoomInStepFactor = 0.72
@@ -98,15 +157,12 @@ struct ContentView: View {
         !locationSuggestions.suggestions.isEmpty
     }
 
-    private var navTitle: String { "Pidge" }
+    private var navTitle: String { "NYC Parking Planner" }
 
     var body: some View {
         NavigationStack {
             ZStack {
-                if !authSession.isAuthenticated {
-                    authGateView
-                        .transition(.opacity)
-                } else if appStage == .landing {
+                if appStage == .landing {
                     landingView
                         .transition(.opacity)
                 } else {
@@ -114,20 +170,15 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
             }
-            .animation(.easeInOut(duration: 0.28), value: authSession.isAuthenticated)
             .animation(.easeInOut(duration: 0.28), value: appStage)
             .tint(AppTheme.action)
             .navigationTitle(navTitle)
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
-            .onAppear {
-                locationManager.start()
-            }
             .onReceive(liveRefreshTimer) { _ in
-                guard authSession.isAuthenticated,
-                      appStage == .results,
-                      mode == .street else { return }
+                guard appStage == .results,
+                      mode != .garages else { return }
                 if let mapVisibleRegion {
                     curbVM.refresh(in: mapVisibleRegion, force: true)
                 } else if let refreshCoordinate = mapCenterCoordinate ?? destinationCoordinate {
@@ -135,122 +186,24 @@ struct ContentView: View {
                 }
             }
             .onReceive(countdownTimer) { _ in
-                guard authSession.isAuthenticated,
-                      appStage == .results,
-                      mode == .street else { return }
+                guard appStage == .results,
+                      mode != .garages else { return }
                 countdownNow = Date()
             }
             .onReceive(curbVM.$segments) { segments in
-                recalculateDerivedNextChanges(for: segments, reference: Date())
                 recalculateHydrantNoParkingSegments(segments: segments)
             }
-        }
-    }
-
-    private var authGateView: some View {
-        ZStack {
-            LinearGradient(
-                colors: [AppTheme.breeze, AppTheme.cloud, AppTheme.haze],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-
-            Circle()
-                .fill(AppTheme.breeze.opacity(0.45))
-                .frame(width: 380, height: 380)
-                .blur(radius: 18)
-                .offset(x: 140, y: -210)
-
-            Circle()
-                .fill(AppTheme.haze.opacity(0.35))
-                .frame(width: 320, height: 320)
-                .blur(radius: 26)
-                .offset(x: -150, y: 260)
-
-            VStack(alignment: .leading, spacing: 18) {
-                Spacer(minLength: 8)
-
-                Text("Welcome to Pidge")
-                    .font(.system(size: 40, weight: .bold, design: .rounded))
-                    .foregroundStyle(AppTheme.ink)
-
-                Text("Log in or sign up to keep your parking settings synced.")
-                    .font(.subheadline)
-                    .foregroundStyle(AppTheme.ink.opacity(0.82))
-
-                if let backendNote = authSession.backendNote {
-                    Text(backendNote)
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.ink.opacity(0.76))
-                } else {
-                    Text("Using \(authSession.backendLabel) authentication.")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.ink.opacity(0.76))
-                }
-
-                Picker("Account", selection: $authMode) {
-                    ForEach(AuthFormMode.allCases) { currentMode in
-                        Text(currentMode.rawValue).tag(currentMode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: authMode) { _, _ in
-                    authStatus = nil
-                }
-
-                if authMode == .signUp {
-                    TextField("Name", text: $authName)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 11)
-                        .background(AppTheme.softSurface)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-
-                TextField("Email", text: $authEmail)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 11)
-                    .background(AppTheme.softSurface)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-#if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-#endif
-
-                SecureField("Password", text: $authPassword)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 11)
-                    .background(AppTheme.softSurface)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                Button(authMode == .login ? "Log In" : "Create Account") {
-                    Task {
-                        await submitAuth()
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button("Continue as Guest") {
-                    authSession.continueAsGuest()
-                }
-                .buttonStyle(.bordered)
-
-                if let authStatus {
-                    Text(authStatus)
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.ink.opacity(0.82))
-                }
-
-                Spacer(minLength: 8)
+            .onReceive(locationManager.$location.compactMap { $0 }) { location in
+                guard isWaitingForCurrentLocation else { return }
+                isWaitingForCurrentLocation = false
+                let item = MKMapItem(placemark: MKPlacemark(coordinate: location.coordinate))
+                applyDestination(item: item, fallbackName: "Current location")
             }
-            .padding(24)
-            .opacity(authCardVisible ? 1 : 0)
-            .offset(y: authCardVisible ? 0 : 14)
-            .onAppear {
-                authCardVisible = false
-                withAnimation(.easeOut(duration: 0.45)) {
-                    authCardVisible = true
-                }
+            .onReceive(locationManager.$authorizationStatus) { status in
+                guard isWaitingForCurrentLocation,
+                      status == .denied || status == .restricted else { return }
+                isWaitingForCurrentLocation = false
+                searchStatus = "Location access is unavailable. Enter a destination instead."
             }
         }
     }
@@ -333,6 +286,21 @@ struct ContentView: View {
                         .shadow(color: AppTheme.haze.opacity(0.18), radius: 7, x: 0, y: 4)
                         .frame(maxWidth: .infinity)
 
+                        Button {
+                            isWaitingForCurrentLocation = true
+                            searchStatus = "Waiting for your location…"
+                            locationManager.start()
+                        } label: {
+                            Label(
+                                isWaitingForCurrentLocation ? "Locating…" : "Use my location",
+                                systemImage: "location.fill"
+                            )
+                            .font(.caption.weight(.bold))
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isWaitingForCurrentLocation)
+
                         if shouldShowSuggestions {
                             ScrollView {
                                 VStack(alignment: .leading, spacing: 0) {
@@ -390,6 +358,93 @@ struct ContentView: View {
                             .transition(.opacity)
                         }
 
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Label("Arrival", systemImage: "clock")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(AppTheme.ink.opacity(0.78))
+                                Spacer()
+                                DatePicker(
+                                    "Arrival",
+                                    selection: $arrivalDate,
+                                    in: Date().addingTimeInterval(-3600)...Date().addingTimeInterval(30 * 24 * 3600),
+                                    displayedComponents: [.date, .hourAndMinute]
+                                )
+                                .labelsHidden()
+                                .datePickerStyle(.compact)
+                                .onChange(of: arrivalDate) { _, newArrival in
+                                    if departureDate <= newArrival {
+                                        departureDate = newArrival.addingTimeInterval(60 * 60)
+                                    }
+                                }
+                            }
+
+                            HStack {
+                                Label("Leave", systemImage: "clock.arrow.circlepath")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(AppTheme.ink.opacity(0.78))
+                                Spacer()
+                                DatePicker(
+                                    "Leave",
+                                    selection: $departureDate,
+                                    in: arrivalDate.addingTimeInterval(60)...arrivalDate.addingTimeInterval(7 * 24 * 3600),
+                                    displayedComponents: [.date, .hourAndMinute]
+                                )
+                                .labelsHidden()
+                                .datePickerStyle(.compact)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Maximum walk")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(AppTheme.ink.opacity(0.7))
+                                HStack(spacing: 5) {
+                                    ForEach([5, 10, 15, 20], id: \.self) { minutes in
+                                        Button("\(minutes) min") {
+                                            maxWalkMinutes = minutes
+                                        }
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(maxWalkMinutes == minutes ? Color.white : AppTheme.ink)
+                                        .frame(maxWidth: .infinity, minHeight: 34)
+                                        .background(
+                                            maxWalkMinutes == minutes ? AppTheme.ink.opacity(0.9) : Color.white.opacity(0.58),
+                                            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        )
+                                        .buttonStyle(.plain)
+                                        .accessibilityAddTraits(maxWalkMinutes == minutes ? .isSelected : [])
+                                    }
+                                }
+                            }
+
+                            HStack(spacing: 6) {
+                                landingPreferenceButton(
+                                    title: "Paid",
+                                    systemImage: "dollarsign.circle.fill",
+                                    isOn: $allowPaidParking
+                                )
+                                landingPreferenceButton(
+                                    title: "Garages",
+                                    systemImage: "parkingsign.circle.fill",
+                                    isOn: $allowGarages
+                                )
+                                Label("Transit gated", systemImage: "tram.fill")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(AppTheme.ink.opacity(0.62))
+                                    .frame(maxWidth: .infinity, minHeight: 34)
+                                    .background(Color.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            }
+
+                            Text("Park-and-ride remains behind the transit validation gate.")
+                                .font(.caption2)
+                                .foregroundStyle(AppTheme.ink.opacity(0.68))
+                        }
+                        .padding(11)
+                        .background(Color.white.opacity(0.48), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(AppTheme.action.opacity(0.15), lineWidth: 1)
+                        )
+
                         if isSearchingDestination {
                             HStack(spacing: 8) {
                                 ProgressView()
@@ -415,28 +470,11 @@ struct ContentView: View {
 
                     Spacer(minLength: 0)
 
-                    HStack {
-                        Spacer()
-                        Button("Log Out") {
-                            authSession.logOut()
-                            resetForLoggedOutState()
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 9)
-                        .background(
-                            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                .fill(AppTheme.action.opacity(0.9))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                        .stroke(AppTheme.ink.opacity(0.18), lineWidth: 1)
-                                )
-                        )
-                        .buttonStyle(.plain)
-                        Spacer()
-                    }
-                    .frame(width: panelWidth)
+                    Text("Anonymous advisory service • No trip history is stored")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .multilineTextAlignment(.center)
+                        .frame(width: panelWidth)
                     .padding(.bottom, max(16, proxy.safeAreaInsets.bottom + 6))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -450,79 +488,746 @@ struct ContentView: View {
         }
     }
 
+    private func landingPreferenceButton(
+        title: String,
+        systemImage: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        Button {
+            isOn.wrappedValue.toggle()
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.caption)
+                Text(title)
+                    .font(.caption2.weight(.bold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isOn.wrappedValue ? Color.white : AppTheme.ink.opacity(0.76))
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(
+                isOn.wrappedValue ? AppTheme.action.opacity(0.9) : AppTheme.cloud.opacity(0.48),
+                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(isOn.wrappedValue ? "On" : "Off")
+    }
+
     private var resultsView: some View {
-        ZStack(alignment: .bottom) {
-            resultsMap
-            resultsBottomPanel
+        GeometryReader { proxy in
+            ZStack(alignment: .bottom) {
+                resultsMap
+
+                VStack {
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 8) {
+                            Button {
+                                focusOnBestParking()
+                            } label: {
+                                Image(systemName: "scope")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(AppTheme.ink)
+                                    .frame(width: 40, height: 40)
+                                    .background(AppTheme.cloud.opacity(0.96), in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(recommendations.isEmpty ? "Center map on destination" : "Center map on best parking lead")
+
+                            zoomControls
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(.top, 10)
+                .padding(.trailing, 12)
+
+                nativeMapSheet(containerHeight: proxy.size.height)
+            }
         }
     }
 
     private var resultsMap: some View {
         MapReader { proxy in
-            ZStack(alignment: .topTrailing) {
-                Map(position: $position) {
-                    if let destinationCoordinate {
-                        Marker("Destination", systemImage: "mappin.and.ellipse", coordinate: destinationCoordinate)
-                            .tint(.orange)
-                    }
-
-                    if mode == .street {
-                        streetMapLayer
-                        hydrantMapLayer
-                    } else {
-                        garageMapLayer
-                    }
+            Map(position: $position) {
+                if let destinationCoordinate {
+                    Marker("Destination", systemImage: "mappin.and.ellipse", coordinate: destinationCoordinate)
+                        .tint(AppTheme.action)
                 }
-                .onMapCameraChange(frequency: .onEnd) { context in
-                    guard authSession.isAuthenticated,
-                          appStage == .results else { return }
-                    let center = context.region.center
-                    guard CLLocationCoordinate2DIsValid(center) else { return }
 
-                    mapCenterCoordinate = center
-                    mapVisibleRegion = context.region
-                    if mode == .street {
-                        initializeHydrantVisibilityThresholdIfNeeded(for: context.region)
-                        curbVM.refresh(in: context.region)
-                        refreshHydrants(for: context.region)
+                if mode != .garages {
+                    streetMapLayer
+                    hydrantMapLayer
+                    if mode == .best {
+                        recommendationMapLayer
                     }
+                } else {
+                    garageMapLayer
                 }
-                .simultaneousGesture(
-                    SpatialTapGesture().onEnded { value in
-                        guard mode == .street else { return }
-                        guard let coordinate = proxy.convert(value.location, from: .local) else { return }
+            }
+            .onMapCameraChange(frequency: .onEnd) { context in
+                guard appStage == .results else { return }
+                let center = context.region.center
+                guard CLLocationCoordinate2DIsValid(center) else { return }
+
+                mapCenterCoordinate = center
+                mapVisibleRegion = context.region
+                if mode != .garages {
+                    initializeHydrantVisibilityThresholdIfNeeded(for: context.region)
+                    curbVM.refresh(in: context.region)
+                    refreshHydrants(for: context.region)
+                }
+            }
+            .simultaneousGesture(
+                SpatialTapGesture().onEnded { value in
+                    guard let coordinate = proxy.convert(value.location, from: .local) else { return }
+                    if mode != .garages {
                         handleStreetTap(at: coordinate)
-                    }
-                )
-                .mapStyle(.standard(elevation: .realistic))
-                .mapControls {
-                    MapUserLocationButton()
-                    MapCompass()
-                    MapScaleView()
-                }
-                .ignoresSafeArea()
-
-                VStack(alignment: .trailing, spacing: 10) {
-                    zoomControls
-
-                    if mode == .street, let segment = selectedStreet {
-                        ParkingPopup(
-                            segment: segment,
-                            nextChange: nextChangeDate(for: segment, reference: countdownNow),
-                            countdownText: countdownText(for: segment, now: countdownNow)
-                        ) {
-                            selectedStreet = nil
-                        }
-                    } else if mode == .garages, let garage = selectedGarage {
-                        GaragePopup(garage: garage)
+                    } else {
+                        handleGarageTap(at: coordinate)
                     }
                 }
-                .padding(.top, 10)
-                .padding(.trailing, 10)
-                .contentShape(Rectangle())
-                .onTapGesture {}
+            )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 6).onChanged { _ in
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        mapSheetPosition = .minimized
+                    }
+                }
+            )
+            .mapStyle(.standard(elevation: .realistic))
+            .mapControls {
+                MapCompass()
+                MapScaleView()
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    private var mapToolbar: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    focusOnBestParking()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "scope")
+                            .font(.caption)
+                        Text(destinationName.isEmpty ? "Destination" : destinationName)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(AppTheme.ink)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(recommendations.isEmpty ? "Center map on destination" : "Center map on best parking lead")
+
+                Spacer(minLength: 0)
+
+                Button {
+                    resetToLanding()
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(width: 32, height: 32)
+                        .background(AppTheme.breeze.opacity(0.72), in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("New Search")
+            }
+
+            Picker("Parking Type", selection: $mode) {
+                ForEach(ParkingMode.allCases) { currentMode in
+                    Text(currentMode.rawValue).tag(currentMode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: mode) { _, newMode in
+                handleModeChange(newMode)
             }
         }
+        .padding(10)
+        .frame(maxWidth: 290)
+        .background(AppTheme.cloud.opacity(0.94), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .stroke(AppTheme.action.opacity(0.2), lineWidth: 1)
+        )
+        .shadow(color: AppTheme.ink.opacity(0.16), radius: 9, y: 4)
+    }
+
+    private func nativeMapSheet(containerHeight: CGFloat) -> some View {
+        let minimizedHeight: CGFloat = 94
+        let halfHeight = max(300, min(containerHeight * 0.52, 470))
+        let expandedHeight = max(halfHeight, min(containerHeight * 0.86, 760))
+        let height: CGFloat
+        switch mapSheetPosition {
+        case .minimized:
+            height = minimizedHeight
+        case .half:
+            height = halfHeight
+        case .expanded:
+            height = expandedHeight
+        }
+
+        return VStack(spacing: 0) {
+            Capsule()
+                .fill(AppTheme.ink.opacity(0.3))
+                .frame(width: 38, height: 5)
+                .padding(.top, 8)
+                .padding(.bottom, 7)
+                .accessibilityHidden(true)
+
+            nativeSheetHeader
+
+            if mapSheetPosition != .minimized {
+                Divider()
+                    .padding(.top, 9)
+
+                Picker("Parking Type", selection: $mode) {
+                    ForEach(ParkingMode.allCases) { currentMode in
+                        Text(currentMode.rawValue).tag(currentMode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .onChange(of: mode) { _, newMode in
+                    handleModeChange(newMode)
+                }
+
+                nativeAvailabilityStrip
+                    .padding(.horizontal, 14)
+                    .padding(.top, 9)
+
+                nativeLiveStatus
+                    .padding(.horizontal, 14)
+                    .padding(.top, 7)
+
+                nativeSheetContent
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .padding(.bottom, 10)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: height, alignment: .top)
+        .background(AppTheme.cloud.opacity(0.98))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(AppTheme.action.opacity(0.2), lineWidth: 1)
+        )
+        .shadow(color: AppTheme.ink.opacity(0.22), radius: 16, y: -4)
+        .padding(.horizontal, 7)
+        .padding(.bottom, 5)
+        .offset(y: max(0, mapSheetDragOffset))
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 12)
+                .onChanged { value in
+                    mapSheetDragOffset = value.translation.height
+                }
+                .onEnded { value in
+                    let threshold: CGFloat = 70
+                    if value.translation.height > threshold {
+                        moveMapSheet(by: -1)
+                    } else if value.translation.height < -threshold {
+                        moveMapSheet(by: 1)
+                    }
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                        mapSheetDragOffset = 0
+                    }
+                }
+        )
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: mapSheetPosition)
+    }
+
+    private var nativeSheetHeader: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(destinationName.isEmpty ? "Destination" : destinationName)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(AppTheme.ink)
+                    .lineLimit(1)
+                Text("\(nativeResultCount) \(nativeResultLabel)")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.ink.opacity(0.66))
+            }
+
+            Spacer(minLength: 4)
+
+            Button {
+                resetToLanding()
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(width: 44, height: 44)
+                    .background(AppTheme.breeze.opacity(0.72), in: RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("New search")
+
+            sheetPositionButtons
+        }
+        .padding(.horizontal, 14)
+    }
+
+    private var sheetPositionButtons: some View {
+        HStack(spacing: 4) {
+            Button {
+                moveMapSheet(by: -1)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 44, height: 44)
+                    .background(AppTheme.breeze.opacity(0.62), in: RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AppTheme.ink)
+            .disabled(mapSheetPosition == .minimized)
+            .opacity(mapSheetPosition == .minimized ? 0.35 : 1)
+            .accessibilityLabel("Minimize results")
+
+            Button {
+                moveMapSheet(by: 1)
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 44, height: 44)
+                    .background(AppTheme.breeze.opacity(0.62), in: RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AppTheme.ink)
+            .disabled(mapSheetPosition == .expanded)
+            .opacity(mapSheetPosition == .expanded ? 0.35 : 1)
+            .accessibilityLabel("Expand results")
+        }
+    }
+
+    @ViewBuilder
+    private var nativeAvailabilityStrip: some View {
+        if mode != .garages {
+            let availability = currentAvailability
+            HStack(spacing: 7) {
+                availabilityPill(label: "Free", value: availability.free, color: .green)
+                availabilityPill(label: "Paid", value: availability.paid, color: .yellow)
+                availabilityPill(label: "Cannot park", value: availability.cannotPark, color: .red)
+                availabilityPill(label: "Unknown", value: availability.unknown, color: .gray)
+            }
+        }
+    }
+
+    private func availabilityPill(label: String, value: Int, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            Text("\(value) \(label)")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(AppTheme.ink)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, minHeight: 30)
+        .background(Color.white.opacity(0.52), in: Capsule())
+    }
+
+    @ViewBuilder
+    private var nativeLiveStatus: some View {
+        let status = currentNativeStatus
+        if !status.isEmpty || isCurrentModeLoading {
+            HStack(spacing: 8) {
+                if isCurrentModeLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(status)
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.ink.opacity(0.72))
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                if currentModeHasError {
+                    Button("Retry") {
+                        retryCurrentMode()
+                    }
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(minWidth: 54, minHeight: 34)
+                    .background(AppTheme.breeze.opacity(0.75), in: Capsule())
+                    .buttonStyle(.plain)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    @ViewBuilder
+    private var nativeSheetContent: some View {
+        if let recommendation = selectedRecommendation {
+            recommendationDetail(recommendation)
+        } else if let segment = selectedStreet {
+            ParkingPopup(
+                segment: segment,
+                nextChange: nextChangeDate(for: segment, reference: countdownNow),
+                countdownText: countdownText(for: segment, now: countdownNow),
+                onClose: dismissMapOverlay
+            )
+        } else if let garage = selectedGarage {
+            GaragePopup(garage: garage, onClose: dismissMapOverlay)
+        } else {
+            switch mode {
+            case .best:
+                recommendationOptionsPanel
+            case .street:
+                streetOptionsPanel
+            case .garages:
+                garageOptionsPanel
+            }
+        }
+    }
+
+    private var recommendationOptionsPanel: some View {
+        Group {
+            if recommendations.isEmpty {
+                Text(isLoadingRecommendations ? "Evaluating the complete interval…" : "No eligible advisory recommendations are available for these preferences.")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.ink.opacity(0.7))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 9) {
+                        ForEach(recommendations.prefix(60)) { recommendation in
+                            Button {
+                                selectRecommendation(recommendation)
+                            } label: {
+                                HStack(alignment: .top, spacing: 10) {
+                                    Circle()
+                                        .fill(recommendation.statusColor)
+                                        .frame(width: 12, height: 12)
+                                        .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                                        .padding(.top, 5)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(recommendation.title)
+                                            .font(.subheadline.weight(.bold))
+                                            .foregroundStyle(AppTheme.ink)
+                                            .lineLimit(1)
+                                        Text(recommendation.subtitle)
+                                            .font(.caption)
+                                            .foregroundStyle(AppTheme.ink.opacity(0.68))
+                                            .lineLimit(2)
+                                        Text("\(recommendation.tierLabel) · \(recommendation.walkMinutes) min walk")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(AppTheme.action)
+                                    }
+                                    Spacer(minLength: 4)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(AppTheme.ink.opacity(0.45))
+                                }
+                                .padding(10)
+                                .background(Color.white.opacity(0.52), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func recommendationDetail(_ recommendation: ParkingRecommendation) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(recommendation.title)
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.ink)
+                        Text(recommendation.tierLabel)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(recommendation.statusColor)
+                    }
+                    Spacer()
+                    Button(action: dismissMapOverlay) {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(AppTheme.ink)
+                            .frame(width: 44, height: 44)
+                            .background(AppTheme.breeze.opacity(0.62), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close recommendation details")
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("PLANNED PARKING WINDOW")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(AppTheme.ink.opacity(0.62))
+                    Text(plannedParkingWindowText)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(AppTheme.ink)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(AppTheme.breeze.opacity(0.46), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                Text(recommendation.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.ink.opacity(0.74))
+                Text(recommendation.ruleSummary)
+                    .font(.callout)
+                    .foregroundStyle(AppTheme.ink)
+                Text("Confidence: \(Int(((recommendation.confidence ?? 0) * 100).rounded()))% · \(recommendation.walkMinutes) min walk")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.ink.opacity(0.66))
+
+                if let countdown = recommendationCountdown(recommendation) {
+                    Text("Rule changes in \(countdown)")
+                        .font(.caption.monospacedDigit().weight(.bold))
+                        .foregroundStyle(AppTheme.action)
+                }
+
+                if let transit = recommendation.transit {
+                    Text("Transit timing: \(transit.state == "live" ? "realtime" : "scheduled")")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.ink.opacity(0.72))
+                }
+
+                if let facility = recommendation.facility,
+                   let licenseNumber = facility.licenseNumber {
+                    Text("NYC DCWP license \(licenseNumber) · \(facility.licenseStatus ?? "status unavailable")")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.ink.opacity(0.72))
+                }
+
+                Text("Advisory only. Verify posted signs, meter or ParkNYC instructions, and facility terms. A result does not guarantee an open physical space.")
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.ink.opacity(0.58))
+            }
+            .padding(12)
+            .background(Color.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        }
+    }
+
+    private var nativeResultCount: Int {
+        switch mode {
+        case .best: return recommendations.count
+        case .street: return curbVM.segments.count
+        case .garages: return garages.count
+        }
+    }
+
+    private var nativeResultLabel: String {
+        switch mode {
+        case .best: return "ranked options"
+        case .street: return "visible curbs"
+        case .garages: return "active licensed facilities"
+        }
+    }
+
+    private var currentAvailability: ParkingAvailability {
+        if mode == .best, let recommendationAvailability {
+            return recommendationAvailability
+        }
+        return ParkingAvailability(
+            cannotPark: curbVM.segments.filter { $0.status == .illegalNow }.count,
+            paid: curbVM.segments.filter { $0.status == .caution }.count,
+            free: curbVM.segments.filter { $0.status == .legalNow }.count,
+            unknown: curbVM.segments.filter { $0.status == .unknown }.count
+        )
+    }
+
+    private var currentNativeStatus: String {
+        switch mode {
+        case .best:
+            return recommendationStatus ?? (isLoadingRecommendations ? "Checking advisory parking options…" : "Advisory interval-aware options")
+        case .street:
+            return curbVM.errorMessage ?? curbVM.sourceLabel
+        case .garages:
+            return garageStatus ?? (garages.isEmpty ? "No licensed facilities loaded" : "Active licensed facilities; capacity and pricing are not provided")
+        }
+    }
+
+    private var isCurrentModeLoading: Bool {
+        switch mode {
+        case .best: return isLoadingRecommendations
+        case .street: return curbVM.isLoading
+        case .garages: return isLoadingGarages
+        }
+    }
+
+    private var currentModeHasError: Bool {
+        switch mode {
+        case .best: return recommendationStatus?.contains("failed") == true
+        case .street: return curbVM.errorMessage != nil
+        case .garages: return garageStatus?.contains("failed") == true
+        }
+    }
+
+    private func retryCurrentMode() {
+        guard let destinationCoordinate else { return }
+        switch mode {
+        case .best:
+            loadRecommendations(near: destinationCoordinate)
+        case .street:
+            if let mapVisibleRegion {
+                curbVM.refresh(in: mapVisibleRegion, force: true)
+            } else {
+                curbVM.refresh(near: destinationCoordinate, force: true)
+            }
+        case .garages:
+            loadGarages(near: destinationCoordinate)
+        }
+    }
+
+    private func recommendationCountdown(_ recommendation: ParkingRecommendation) -> String? {
+        guard let raw = recommendation.nextChange else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+        guard let date else { return nil }
+        let remaining = Int(date.timeIntervalSince(countdownNow))
+        guard remaining > 0 else { return nil }
+        return String(format: "%02d:%02d", remaining / 60, remaining % 60)
+    }
+
+    private func moveMapSheet(by offset: Int) {
+        let nextValue = min(max(mapSheetPosition.rawValue + offset, 0), MapSheetPosition.allCases.count - 1)
+        guard let next = MapSheetPosition(rawValue: nextValue) else { return }
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+            mapSheetPosition = next
+            mapSheetDragOffset = 0
+        }
+    }
+
+    private var mapStatusToast: some View {
+        Text(mapStatusText)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(AppTheme.ink.opacity(0.8))
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(AppTheme.cloud.opacity(0.9), in: Capsule())
+            .overlay(Capsule().stroke(AppTheme.action.opacity(0.18), lineWidth: 1))
+            .allowsHitTesting(false)
+    }
+
+    private var mapStatusText: String {
+        if mode == .best {
+            return recommendationStatus ?? "Advisory interval-aware parking options"
+        }
+        if mode == .street {
+            return curbVM.sourceLabel
+        }
+        if let garageStatus, !garageStatus.isEmpty {
+            return garageStatus
+        }
+        return "\(garages.count) active licensed facilities nearby"
+    }
+
+    @ViewBuilder
+    private var mapContextOverlay: some View {
+        switch mapOverlayState {
+        case .collapsed:
+            nearbyResultsButton
+        case .browsing:
+            nearbyResultsDrawer
+        case .selected:
+            if mode == .street, let segment = selectedStreet {
+                ParkingPopup(
+                    segment: segment,
+                    nextChange: nextChangeDate(for: segment, reference: countdownNow),
+                    countdownText: countdownText(for: segment, now: countdownNow),
+                    onClose: dismissMapOverlay
+                )
+            } else if mode == .garages, let garage = selectedGarage {
+                GaragePopup(garage: garage, onClose: dismissMapOverlay)
+            } else {
+                nearbyResultsButton
+            }
+        }
+    }
+
+    private var nearbyResultsButton: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) {
+                mapOverlayState = .browsing
+            }
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "list.bullet")
+                    .font(.caption.weight(.bold))
+                Text(mode == .street ? "Nearby curbs" : "Nearby garages")
+                    .font(.subheadline.weight(.semibold))
+                Text("\(mode == .street ? curbVM.segments.count : garages.count)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(AppTheme.ink)
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 26)
+                    .background(AppTheme.breeze, in: Capsule())
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 15)
+            .padding(.vertical, 11)
+            .background(AppTheme.ink.opacity(0.94), in: Capsule())
+            .shadow(color: AppTheme.ink.opacity(0.25), radius: 10, y: 5)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show nearby \(mode == .street ? "curbs" : "garages")")
+    }
+
+    private var nearbyResultsDrawer: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("NEARBY")
+                        .font(.caption2.weight(.bold))
+                        .tracking(1)
+                        .foregroundStyle(.secondary)
+                    Text(mode == .street ? "Street parking" : "Garages")
+                        .font(.headline)
+                }
+
+                Spacer()
+
+                Text("\(mode == .street ? curbVM.segments.count : garages.count)")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 9)
+                    .frame(minHeight: 28)
+                    .background(AppTheme.breeze.opacity(0.75), in: Capsule())
+
+                Button {
+                    dismissMapOverlay()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(width: 30, height: 30)
+                        .background(AppTheme.breeze.opacity(0.62), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close nearby results")
+            }
+
+            if mode == .street {
+                streetOptionsPanel
+            } else {
+                garageOptionsPanel
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: 420)
+        .background(AppTheme.cloud.opacity(0.98), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(AppTheme.action.opacity(0.22), lineWidth: 1)
+        )
+        .shadow(color: AppTheme.ink.opacity(0.2), radius: 12, y: 6)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var zoomControls: some View {
@@ -563,6 +1268,10 @@ struct ContentView: View {
     private var streetMapLayer: some MapContent {
         ForEach(curbVM.segments) { segment in
             MapPolyline(coordinates: segment.coordinates)
+                .stroke(Color.white.opacity(0.92), lineWidth: selectedStreet?.id == segment.id ? 13 : 10)
+                .mapOverlayLevel(level: .aboveRoads)
+
+            MapPolyline(coordinates: segment.coordinates)
                 .stroke(segment.status.color, lineWidth: selectedStreet?.id == segment.id ? 10 : 7)
                 .mapOverlayLevel(level: .aboveRoads)
 
@@ -577,6 +1286,24 @@ struct ContentView: View {
             MapPolyline(coordinates: blocked.coordinates)
                 .stroke(Color.red.opacity(0.96), lineWidth: 9)
                 .mapOverlayLevel(level: .aboveRoads)
+        }
+    }
+
+    private var recommendationMapLayer: some MapContent {
+        ForEach(recommendations) { recommendation in
+            Annotation(recommendation.title, coordinate: recommendation.coordinate) {
+                Button {
+                    selectRecommendation(recommendation)
+                } label: {
+                    BestRecommendationMarker(
+                        color: recommendation.statusColor,
+                        isBest: recommendations.first?.id == recommendation.id,
+                        isSelected: selectedRecommendation?.id == recommendation.id
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(recommendations.first?.id == recommendation.id ? "Best parking lead" : "Parking option"): \(recommendation.title), \(recommendation.tierLabel)")
+            }
         }
     }
 
@@ -622,100 +1349,6 @@ struct ContentView: View {
                 .accessibilityLabel("Select garage \(garage.name)")
             }
         }
-    }
-
-    private var resultsBottomPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Button {
-                        focusOnDestination()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "scope")
-                                .font(.caption)
-                            Text(destinationName.isEmpty ? "Selected destination" : destinationName)
-                                .font(.headline)
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Center map on destination")
-                }
-                Spacer()
-                Button(showOptionsList ? "Hide List" : "Show List") {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showOptionsList.toggle()
-                    }
-                }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(AppTheme.ink.opacity(0.9))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(AppTheme.action.opacity(0.4), lineWidth: 1)
-                        )
-                )
-                .buttonStyle(.plain)
-
-                Button {
-                    resetToLanding()
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(AppTheme.ink.opacity(0.95))
-                        .padding(9)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(AppTheme.cloud.opacity(0.95))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .stroke(AppTheme.action.opacity(0.3), lineWidth: 1)
-                                )
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("New Search")
-            }
-
-            Picker("Parking Type", selection: $mode) {
-                ForEach(ParkingMode.allCases) { currentMode in
-                    Text(currentMode.rawValue).tag(currentMode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .onChange(of: mode) { _, newMode in
-                handleModeChange(newMode)
-            }
-
-            if showOptionsList {
-                if mode == .street {
-                    streetOptionsPanel
-                        .opacity(1)
-                        .transition(.opacity)
-                } else {
-                    garageOptionsPanel
-                        .opacity(1)
-                        .transition(.opacity)
-                }
-            }
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(showOptionsList ? AppTheme.cloud.opacity(0.98) : AppTheme.cloud.opacity(0.82))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(AppTheme.action.opacity(0.22), lineWidth: 1)
-                )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .padding()
     }
 
     private var streetOptionsPanel: some View {
@@ -789,7 +1422,7 @@ struct ContentView: View {
     private var garageOptionsPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Nearby garage options")
+                Text("Active licensed facilities")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -806,7 +1439,7 @@ struct ContentView: View {
             }
 
             if garages.isEmpty {
-                Text(isLoadingGarages ? "Loading garages…" : "No garage options found yet.")
+                Text(isLoadingGarages ? "Loading licensed facilities…" : "No active licensed facilities found yet.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
@@ -844,6 +1477,12 @@ struct ContentView: View {
                                                     .foregroundStyle(.secondary)
                                             }
                                         }
+
+                                        if let licenseNumber = garage.licenseNumber {
+                                            Text("NYC DCWP license \(licenseNumber)")
+                                                .font(.caption2.weight(.semibold))
+                                                .foregroundStyle(AppTheme.ink.opacity(0.7))
+                                        }
                                     }
 
                                     Spacer()
@@ -857,28 +1496,6 @@ struct ContentView: View {
                 }
                 .frame(maxHeight: 240)
             }
-        }
-    }
-
-    private func submitAuth() async {
-        let result: Result<Void, AuthError>
-        switch authMode {
-        case .login:
-            result = await authSession.logIn(email: authEmail, password: authPassword)
-        case .signUp:
-            result = await authSession.signUp(name: authName, email: authEmail, password: authPassword)
-        }
-
-        switch result {
-        case .success:
-            authStatus = nil
-            authPassword = ""
-            authName = ""
-            withAnimation(.easeInOut(duration: 0.2)) {
-                appStage = .landing
-            }
-        case .failure(let error):
-            authStatus = error.localizedDescription
         }
     }
 
@@ -1012,21 +1629,12 @@ struct ContentView: View {
     private func geocodeAddress(query: String, region: MKCoordinateRegion) async throws -> MKMapItem? {
         let geocoder = CLGeocoder()
         let placemarks = try await geocoder.geocodeAddressString(query)
-
-        let bounded = placemarks.filter { placemark in
-            guard let coordinate = placemark.location?.coordinate else { return false }
-            return region.contains(coordinate)
-        }
-
-        let chosen = bounded.first ?? placemarks.first
-        guard let coordinate = chosen?.location?.coordinate,
-              CLLocationCoordinate2DIsValid(coordinate) else {
+        guard let coordinate = placemarks
+            .compactMap({ $0.location?.coordinate })
+            .first(where: { region.contains($0) }) ?? placemarks.first?.location?.coordinate else {
             return nil
         }
-
-        let item = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
-        item.name = chosen?.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? query
-        return item
+        return MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
     }
 
     private func applyDestination(item: MKMapItem, fallbackName: String) {
@@ -1040,14 +1648,20 @@ struct ContentView: View {
         mapCenterCoordinate = coordinate
         destinationName = item.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? fallbackName
         pendingSuggestion = nil
-        mode = .street
-        showOptionsList = true
+        mode = .best
+        mapOverlayState = .collapsed
+        mapSheetPosition = .half
+        mapSheetDragOffset = 0
         appStage = .results
 
         selectedStreet = nil
         selectedGarage = nil
+        selectedRecommendation = nil
+        recommendations = []
+        recommendationAvailability = nil
+        recommendationStatus = "Checking advisory parking options…"
         garages = []
-        garageStatus = "Loading garage options…"
+        garageStatus = allowGarages ? "Loading licensed facilities…" : nil
 
         let destinationRegion = MKCoordinateRegion(
             center: coordinate,
@@ -1056,25 +1670,84 @@ struct ContentView: View {
         mapVisibleRegion = destinationRegion
         position = .region(destinationRegion)
 
+        curbVM.setEvaluationInterval(start: arrivalDate, end: departureDate)
         initializeHydrantVisibilityThresholdIfNeeded(for: destinationRegion, reset: true)
         curbVM.refresh(in: destinationRegion, force: true)
         refreshHydrants(for: destinationRegion, force: true)
-        loadGarages(near: coordinate)
+        loadRecommendations(near: coordinate)
+        if allowGarages {
+            loadGarages(near: coordinate)
+        }
+    }
+
+    private func loadRecommendations(near coordinate: CLLocationCoordinate2D) {
+        recommendationTask?.cancel()
+        let requestedArrival = arrivalDate
+        let requestedDeparture = departureDate
+        let preferences = ParkingRecommendationPreferences(
+            allowPaid: allowPaidParking,
+            allowGarages: allowGarages,
+            maxWalkMinutes: maxWalkMinutes,
+            allowTransit: false,
+            accessibleOnly: false
+        )
+
+        isLoadingRecommendations = true
+        recommendationStatus = "Checking advisory parking options…"
+        recommendationTask = Task {
+            do {
+                let response = try await recommendationService.fetchRecommendations(
+                    near: coordinate,
+                    arrival: requestedArrival,
+                    departure: requestedDeparture,
+                    preferences: preferences
+                )
+                await MainActor.run {
+                    guard !Task.isCancelled,
+                          isSameCoordinate(lhs: destinationCoordinate, rhs: coordinate),
+                          arrivalDate == requestedArrival,
+                          departureDate == requestedDeparture else { return }
+                    recommendations = response.options
+                    recommendationAvailability = response.availability
+                    let warning = response.warnings.first?.message
+                    recommendationStatus = response.options.isEmpty
+                        ? (warning ?? "No eligible options match this complete interval.")
+                        : (warning ?? "Advisory ranking · verify posted signs")
+                    isLoadingRecommendations = false
+                    if let best = response.options.first {
+                        selectRecommendation(best)
+                    }
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    isLoadingRecommendations = false
+                }
+            } catch {
+                await MainActor.run {
+                    guard !Task.isCancelled,
+                          isSameCoordinate(lhs: destinationCoordinate, rhs: coordinate) else { return }
+                    recommendationStatus = recommendations.isEmpty
+                        ? "Recommendation request failed: \(error.localizedDescription)"
+                        : "Previously loaded recommendations · refresh failed"
+                    isLoadingRecommendations = false
+                }
+            }
+        }
     }
 
     private func loadGarages(near coordinate: CLLocationCoordinate2D) {
         isLoadingGarages = true
-        garageStatus = "Loading garage options…"
+        garageStatus = "Loading licensed facilities…"
 
         Task {
             do {
-                let result = try await garageService.fetchGarages(near: coordinate)
+                let result = try await facilityService.fetchLicensedFacilities(near: coordinate)
                 await MainActor.run {
                     guard isSameCoordinate(lhs: destinationCoordinate, rhs: coordinate) else { return }
 
                     garages = result
                     isLoadingGarages = false
-                    garageStatus = result.isEmpty ? "No garages found near this destination." : nil
+                    garageStatus = result.isEmpty ? "No active licensed facilities found near this destination." : "Active NYC DCWP licensed facilities"
                 }
             } catch {
                 await MainActor.run {
@@ -1082,14 +1755,14 @@ struct ContentView: View {
 
                     garages = []
                     isLoadingGarages = false
-                    garageStatus = "Garage lookup failed: \(error.localizedDescription)"
+                    garageStatus = "Licensed-facility lookup failed: \(error.localizedDescription)"
                 }
             }
         }
     }
 
     private func refreshHydrants(for region: MKCoordinateRegion, force: Bool = false) {
-        guard mode == .street else {
+        guard mode != .garages else {
             clearHydrants()
             return
         }
@@ -1112,14 +1785,15 @@ struct ContentView: View {
         hydrantFetchTask?.cancel()
         hydrantFetchTask = Task {
             do {
-                let fetched = try await hydrantService.fetchHydrants(
-                    near: center,
-                    radiusMeters: radiusMeters,
-                    limit: 350
-                )
+                let fetchedCoordinates = try await hydrantService.fetchHydrantCoordinates(in: region)
                 await MainActor.run {
                     guard !Task.isCancelled else { return }
-                    hydrants = fetched
+                    hydrants = fetchedCoordinates.enumerated().map { index, coordinate in
+                        HydrantPoint(
+                            id: String(format: "%d-%.6f-%.6f", index, coordinate.latitude, coordinate.longitude),
+                            coordinate: coordinate
+                        )
+                    }
                     lastHydrantFetchCenter = center
                     lastHydrantFetchDate = Date()
                     lastHydrantFetchRadiusMeters = radiusMeters
@@ -1196,46 +1870,10 @@ struct ContentView: View {
         return radiusShift < 0.22
     }
 
-    private func recalculateHydrantNoParkingSegments(segments: [CurbSegment]? = nil) {
-        guard mode == .street else {
-            hydrantNoParkingSegments = []
-            return
-        }
-
-        let sourceSegments = segments ?? curbVM.segments
-        guard !sourceSegments.isEmpty, !hydrants.isEmpty else {
-            hydrantNoParkingSegments = []
-            return
-        }
-
-        var blocked: [HydrantNoParkingSegment] = []
-        blocked.reserveCapacity(hydrants.count)
-
-        for hydrant in hydrants {
-            guard let snapped = snapHydrantToNearestSegment(
-                hydrant.coordinate,
-                segments: sourceSegments,
-                maxDistanceMeters: hydrantSegmentSnapMaxDistanceMeters
-            ) else {
-                continue
-            }
-
-            let clipped = clippedCoordinates(
-                along: snapped.segment.coordinates,
-                fromDistanceMeters: snapped.distanceAlongMeters - hydrantNoParkingEachSideMeters,
-                toDistanceMeters: snapped.distanceAlongMeters + hydrantNoParkingEachSideMeters
-            )
-            guard clipped.count >= 2 else { continue }
-
-            blocked.append(
-                HydrantNoParkingSegment(
-                    id: "\(snapped.segment.id.uuidString)-\(hydrant.id)",
-                    coordinates: clipped
-                )
-            )
-        }
-
-        hydrantNoParkingSegments = blocked
+    private func recalculateHydrantNoParkingSegments(segments _: [CurbSegment]? = nil) {
+        // DOT-approved curb-side linkage is not available yet. Hydrant points may be
+        // shown for context, but the client must not manufacture red curb geometry.
+        hydrantNoParkingSegments = []
     }
 
     private func snapHydrantToNearestSegment(
@@ -1403,7 +2041,18 @@ struct ContentView: View {
     private func handleModeChange(_ newMode: ParkingMode) {
         guard let destinationCoordinate else { return }
 
-        if newMode == .street {
+        selectedStreet = nil
+        selectedGarage = nil
+        selectedRecommendation = nil
+        mapOverlayState = .collapsed
+        mapSheetPosition = .half
+
+        if newMode == .best, let best = recommendations.first {
+            selectRecommendation(best)
+            return
+        }
+
+        if newMode != .garages {
             selectedGarage = nil
             mapCenterCoordinate = destinationCoordinate
             let region = MKCoordinateRegion(
@@ -1414,6 +2063,9 @@ struct ContentView: View {
             initializeHydrantVisibilityThresholdIfNeeded(for: region)
             curbVM.refresh(in: region, force: true)
             refreshHydrants(for: region, force: true)
+            if newMode == .best && recommendations.isEmpty {
+                loadRecommendations(near: destinationCoordinate)
+            }
             position = .region(region)
         } else {
             selectedStreet = nil
@@ -1430,29 +2082,9 @@ struct ContentView: View {
         }
     }
 
-    private func recalculateDerivedNextChanges(for segments: [CurbSegment], reference: Date) {
-        var nextByID: [UUID: Date] = [:]
-        for segment in segments {
-            if let explicit = segment.nextChange, explicit > reference {
-                nextByID[segment.id] = explicit
-                continue
-            }
-
-            if let derived = PaidHoursTransitionEstimator.nextTransition(after: reference, rawText: segment.paidHoursText) {
-                nextByID[segment.id] = derived
-            }
-        }
-        derivedNextChangeBySegmentID = nextByID
-    }
-
     private func nextChangeDate(for segment: CurbSegment, reference: Date) -> Date? {
-        if let explicit = segment.nextChange, explicit > reference {
-            return explicit
-        }
-        if let derived = derivedNextChangeBySegmentID[segment.id], derived > reference {
-            return derived
-        }
-        return PaidHoursTransitionEstimator.nextTransition(after: reference, rawText: segment.paidHoursText)
+        guard let explicit = segment.nextChange, explicit > reference else { return nil }
+        return explicit
     }
 
     private func countdownText(for segment: CurbSegment, now: Date) -> String? {
@@ -1465,8 +2097,19 @@ struct ContentView: View {
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
-    private func focusOnDestination() {
+    private func focusOnBestParking() {
+        if let best = recommendations.first {
+            mode = .best
+            selectRecommendation(best)
+            return
+        }
+
         guard let destinationCoordinate else { return }
+        selectedStreet = nil
+        selectedGarage = nil
+        selectedRecommendation = nil
+        mapOverlayState = .collapsed
+        mapSheetPosition = .half
         mapCenterCoordinate = destinationCoordinate
         let region = MKCoordinateRegion(
             center: destinationCoordinate,
@@ -1476,8 +2119,22 @@ struct ContentView: View {
         position = .region(region)
     }
 
+    private var plannedParkingWindowText: String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.timeZone = TimeZone(identifier: "America/New_York")
+        dateFormatter.dateFormat = "MMM d"
+
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeZone = TimeZone(identifier: "America/New_York")
+        timeFormatter.timeStyle = .short
+        timeFormatter.dateStyle = .none
+
+        return "\(dateFormatter.string(from: arrivalDate)), \(timeFormatter.string(from: arrivalDate))–\(timeFormatter.string(from: departureDate))"
+    }
+
     private func zoomMap(factor: Double) {
         guard factor > 0 else { return }
+        dismissMapOverlay()
 
         let center = (mapVisibleRegion?.center) ?? mapCenterCoordinate ?? destinationCoordinate
         guard let center, CLLocationCoordinate2DIsValid(center) else { return }
@@ -1497,15 +2154,42 @@ struct ContentView: View {
         mapVisibleRegion = nextRegion
         position = .region(nextRegion)
 
-        if mode == .street {
+        if mode != .garages {
             curbVM.refresh(in: nextRegion)
             refreshHydrants(for: nextRegion)
         }
     }
 
     private func handleStreetTap(at coordinate: CLLocationCoordinate2D) {
-        guard let tappedSegment = nearestStreetSegment(to: coordinate, maxDistanceMeters: 38) else { return }
+        guard let tappedSegment = nearestStreetSegment(to: coordinate, maxDistanceMeters: 38) else {
+            dismissMapOverlay()
+            return
+        }
         selectStreet(tappedSegment)
+    }
+
+    private func handleGarageTap(at coordinate: CLLocationCoordinate2D) {
+        let tapLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let nearest = garages
+            .map { garage in
+                (
+                    garage: garage,
+                    distance: tapLocation.distance(
+                        from: CLLocation(
+                            latitude: garage.coordinate.latitude,
+                            longitude: garage.coordinate.longitude
+                        )
+                    )
+                )
+            }
+            .filter { $0.distance <= 45 }
+            .min { $0.distance < $1.distance }
+
+        if let nearest {
+            selectGarage(nearest.garage)
+        } else {
+            dismissMapOverlay()
+        }
     }
 
     private func nearestStreetSegment(to coordinate: CLLocationCoordinate2D, maxDistanceMeters: CLLocationDistance) -> CurbSegment? {
@@ -1562,6 +2246,9 @@ struct ContentView: View {
     private func selectStreet(_ segment: CurbSegment) {
         selectedStreet = segment
         selectedGarage = nil
+        selectedRecommendation = nil
+        mapOverlayState = .selected
+        mapSheetPosition = .half
 
         let center = midpoint(of: segment.coordinates)
         mapCenterCoordinate = center
@@ -1576,6 +2263,9 @@ struct ContentView: View {
     private func selectGarage(_ garage: GarageOption) {
         selectedGarage = garage
         selectedStreet = nil
+        selectedRecommendation = nil
+        mapOverlayState = .selected
+        mapSheetPosition = .half
 
         position = .region(
             MKCoordinateRegion(
@@ -1585,13 +2275,36 @@ struct ContentView: View {
         )
     }
 
+    private func selectRecommendation(_ recommendation: ParkingRecommendation) {
+        selectedRecommendation = recommendation
+        selectedStreet = nil
+        selectedGarage = nil
+        mapOverlayState = .selected
+        mapSheetPosition = .half
+        mapCenterCoordinate = recommendation.coordinate
+
+        let region = MKCoordinateRegion(
+            center: recommendation.coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
+        )
+        mapVisibleRegion = region
+        position = .region(region)
+    }
+
     private func resetToLanding() {
         appStage = .landing
-        mode = .street
-        showOptionsList = true
+        mode = .best
+        mapOverlayState = .collapsed
+        mapSheetPosition = .half
 
         selectedStreet = nil
         selectedGarage = nil
+        selectedRecommendation = nil
+        recommendations = []
+        recommendationAvailability = nil
+        recommendationStatus = nil
+        recommendationTask?.cancel()
+        recommendationTask = nil
         garages = []
         garageStatus = nil
 
@@ -1608,35 +2321,20 @@ struct ContentView: View {
         position = .automatic
     }
 
-    private func resetForLoggedOutState() {
-        appStage = .landing
-        mode = .street
-        showOptionsList = true
-
-        searchText = ""
-        searchStatus = nil
-        locationSuggestions.clear()
-
-        destinationName = ""
-        destinationCoordinate = nil
-        mapCenterCoordinate = nil
-        mapVisibleRegion = nil
-        pendingSuggestion = nil
-        clearHydrants()
-        hydrantVisibilityShortEdgeThresholdMeters = nil
-
-        selectedStreet = nil
-        selectedGarage = nil
-        garages = []
-        garageStatus = nil
-
-        authMode = .login
-        authName = ""
-        authEmail = ""
-        authPassword = ""
-        authStatus = nil
-
-        position = .automatic
+    private func dismissMapOverlay() {
+        guard mapOverlayState != .collapsed || selectedStreet != nil || selectedGarage != nil || selectedRecommendation != nil else {
+            withAnimation(.easeOut(duration: 0.18)) {
+                mapSheetPosition = .minimized
+            }
+            return
+        }
+        withAnimation(.easeOut(duration: 0.18)) {
+            mapOverlayState = .collapsed
+            selectedStreet = nil
+            selectedGarage = nil
+            selectedRecommendation = nil
+            mapSheetPosition = .minimized
+        }
     }
 
     private func isSameCoordinate(lhs: CLLocationCoordinate2D?, rhs: CLLocationCoordinate2D) -> Bool {
@@ -1861,17 +2559,24 @@ private enum PaidHoursTransitionEstimator {
 private struct PidgeBrandMark: View {
     var body: some View {
         VStack(spacing: 4) {
-            Text("Pidge")
-                .font(.system(size: 32, weight: .heavy, design: .rounded))
-                .tracking(0.9)
+            Text("NYC Parking Planner")
+                .font(.system(size: 28, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppTheme.ink)
-                .opacity(0.8)
+
+            Text("Where are you going?")
+                .font(.headline)
+                .foregroundStyle(AppTheme.ink.opacity(0.78))
 
             Image("PigeonLogo")
                 .resizable()
                 .scaledToFit()
                 .frame(width: 116, height: 116)
                 .opacity(0.7)
+
+            Text("Pidge can help explain your options. Posted signs remain the authority.")
+                .font(.caption2)
+                .foregroundStyle(AppTheme.ink.opacity(0.66))
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
     }
@@ -1961,10 +2666,11 @@ private struct AnimatedLandingBackground: View {
 private struct ParkingLegend: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            legendRow(color: .red, text: "Red: do not park")
-            legendRow(color: .yellow, text: "Yellow: paid parking")
-            legendRow(color: .green, text: "Green: free parking")
-            Text("Live update: every 60s")
+            legendRow(color: .red, text: "Red means cannot park")
+            legendRow(color: .yellow, text: "Yellow means paid parking")
+            legendRow(color: .green, text: "Green means free parking")
+            legendRow(color: .gray, text: "Gray means unknown — check signs")
+            Text("Classifications cover the selected arrival-to-leave interval.")
                 .foregroundStyle(.secondary)
                 .padding(.top, 2)
         }
@@ -2017,12 +2723,27 @@ private struct GarageLegend: View {
 
 private struct GaragePopup: View {
     let garage: GarageOption
+    let onClose: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(garage.name)
-                .font(.subheadline)
-                .bold()
+            HStack(alignment: .top) {
+                Text(garage.name)
+                    .font(.subheadline)
+                    .bold()
+
+                Spacer()
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(width: 30, height: 30)
+                        .background(AppTheme.breeze.opacity(0.62), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close garage details")
+            }
             Text(garage.address)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -2030,9 +2751,17 @@ private struct GaragePopup: View {
             Text("Distance: \(garage.distanceText)")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            if let licenseNumber = garage.licenseNumber {
+                Text("NYC DCWP license \(licenseNumber) · \(garage.licenseStatus ?? "status unavailable")")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Directory listing only. Capacity, pricing, and space availability are not provided.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(12)
-        .frame(width: 280)
+        .frame(maxWidth: 360, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(AppTheme.cloud.opacity(0.84))
@@ -2129,9 +2858,9 @@ private struct ParkingPopup: View {
                     .foregroundStyle(.secondary)
 
                 if segment.isMeteredLikely {
-                    Text("Paid hours: \(segment.paidHoursText ?? "check meter/Pidge")")
+                    Text("Paid hours: \(segment.paidHoursText ?? "check meter or ParkNYC")")
                         .font(.callout)
-                    Text("Rate: \(segment.rateText ?? "check meter/Pidge")")
+                    Text("Rate: \(segment.rateText ?? "check meter or ParkNYC")")
                         .font(.callout)
                 } else {
                     Text("No meter flag • Still confirm signage")
@@ -2149,7 +2878,7 @@ private struct ParkingPopup: View {
                 .foregroundStyle(.secondary)
         }
         .padding(12)
-        .frame(width: 300)
+        .frame(maxWidth: 360, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(AppTheme.cloud.opacity(0.86))
@@ -2171,144 +2900,6 @@ private struct HydrantPoint: Identifiable {
 private struct HydrantNoParkingSegment: Identifiable {
     let id: String
     let coordinates: [CLLocationCoordinate2D]
-}
-
-private final class NYCHydrantService {
-    private let endpoint = URL(string: "https://data.cityofnewyork.us/resource/5bgh-vtsn.json")!
-    private let session: URLSession
-    private let appToken: String?
-
-    init(
-        session: URLSession = .shared,
-        appToken: String? = Bundle.main.object(forInfoDictionaryKey: "NYCOpenDataAppToken") as? String
-    ) {
-        self.session = session
-        self.appToken = appToken?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-    }
-
-    func fetchHydrants(
-        near coordinate: CLLocationCoordinate2D,
-        radiusMeters: Int,
-        limit: Int
-    ) async throws -> [HydrantPoint] {
-        guard CLLocationCoordinate2DIsValid(coordinate) else { return [] }
-
-        let clampedRadius = max(80, min(700, radiusMeters))
-        let clampedLimit = max(1, min(600, limit))
-        let whereClause = "within_circle(the_geom,\(coordinate.latitude),\(coordinate.longitude),\(clampedRadius))"
-        let selectClause = "unitid,boro,the_geom,latitude,longitude"
-
-        var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
-        components?.queryItems = [
-            URLQueryItem(name: "$select", value: selectClause),
-            URLQueryItem(name: "$where", value: whereClause),
-            URLQueryItem(name: "$limit", value: String(clampedLimit))
-        ]
-
-        guard let url = components?.url else {
-            return []
-        }
-
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let token = appToken {
-            request.setValue(token, forHTTPHeaderField: "X-App-Token")
-        }
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            return []
-        }
-
-        let rows = try JSONDecoder().decode([HydrantRow].self, from: data)
-        let center = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-
-        var seen = Set<String>()
-        let mapped = rows.compactMap { row -> (HydrantPoint, CLLocationDistance)? in
-            guard let pointCoordinate = row.coordinate,
-                  CLLocationCoordinate2DIsValid(pointCoordinate) else {
-                return nil
-            }
-
-            let identifier = row.unitID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ??
-                String(format: "%.6f,%.6f", pointCoordinate.latitude, pointCoordinate.longitude)
-            guard seen.insert(identifier).inserted else { return nil }
-
-            let distance = center.distance(
-                from: CLLocation(latitude: pointCoordinate.latitude, longitude: pointCoordinate.longitude)
-            )
-            return (HydrantPoint(id: identifier, coordinate: pointCoordinate), distance)
-        }
-        .sorted { lhs, rhs in
-            lhs.1 < rhs.1
-        }
-
-        return mapped.map(\.0)
-    }
-}
-
-private struct HydrantRow: Decodable {
-    let unitID: String?
-    let latitude: String?
-    let longitude: String?
-    let geometry: HydrantGeometry?
-
-    enum CodingKeys: String, CodingKey {
-        case unitID = "unitid"
-        case latitude
-        case longitude
-        case geometry = "the_geom"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        unitID = try container.decodeIfPresent(String.self, forKey: .unitID)
-        geometry = try container.decodeIfPresent(HydrantGeometry.self, forKey: .geometry)
-        latitude = Self.decodeString(from: container, forKey: .latitude)
-        longitude = Self.decodeString(from: container, forKey: .longitude)
-    }
-
-    var coordinate: CLLocationCoordinate2D? {
-        if let geometry,
-           let coordinate = geometry.coordinate,
-           CLLocationCoordinate2DIsValid(coordinate) {
-            return coordinate
-        }
-
-        guard let latitudeValue = Double(latitude ?? ""),
-              let longitudeValue = Double(longitude ?? "") else {
-            return nil
-        }
-
-        let fallback = CLLocationCoordinate2D(latitude: latitudeValue, longitude: longitudeValue)
-        return CLLocationCoordinate2DIsValid(fallback) ? fallback : nil
-    }
-
-    private static func decodeString(
-        from container: KeyedDecodingContainer<CodingKeys>,
-        forKey key: CodingKeys
-    ) -> String? {
-        if let value = try? container.decodeIfPresent(String.self, forKey: key) {
-            return value
-        }
-        if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
-            return String(value)
-        }
-        if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
-            return String(value)
-        }
-        return nil
-    }
-}
-
-private struct HydrantGeometry: Decodable {
-    let type: String
-    let coordinates: [Double]
-
-    var coordinate: CLLocationCoordinate2D? {
-        guard type == "Point", coordinates.count >= 2 else { return nil }
-        return CLLocationCoordinate2D(latitude: coordinates[1], longitude: coordinates[0])
-    }
 }
 
 private extension String {

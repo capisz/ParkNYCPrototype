@@ -1,5 +1,6 @@
 import { pool } from "../db";
-import { parseParkingRule, ParsedRule } from "../lib/parkingRuleParser";
+import { config } from "../config";
+import { parseParkingRules, ParsedRule } from "../lib/parkingRuleParser";
 
 type SegmentEvidence = {
   id: string;
@@ -10,37 +11,79 @@ type SegmentEvidence = {
 
 type RuleInsert = ParsedRule & { segmentId: string };
 
+const PUBLIC_DATA_FREE_REFERENCE_SOURCE = "nyc-sign-meter-free-reference";
+
+/**
+ * These are informational companions to a regulatory sign, not independent
+ * curb rules. Treating them as unresolved parking rules made nearly every
+ * ParkNYC blockface gray even when its actual regulation signs were parsed.
+ */
+function isInformationalSignPanel(value: string): boolean {
+  const text = value.replace(/\s+/g, " ").trim().toUpperCase();
+  return /\bPAY-BY-(?:CELL|APP)\b/.test(text) ||
+    /\bLOCATOR NUMBER\b/.test(text) ||
+    /\bMTA BUS (?:ROUTE|DESTINATION) PANEL\b/.test(text) ||
+    /\bSELECT BUS SERVICE (?:ROUTE|DESTINATION) PANEL\b/.test(text) ||
+    /\bLOCATION PANEL\b/.test(text) ||
+    /\bREAL TIME PUBLIC INFORMATION BOX\b/.test(text) ||
+    /\bMETERS? (?:ARE|IS) NOT IN EFFECT ABOVE TIMES\b/.test(text);
+}
+
 function rulesForSegment(row: SegmentEvidence): RuleInsert[] {
-  const signRules = (row.signs ?? []).map(text => parseParkingRule(text, "nyc-signs"));
+  const regulatorySigns = (row.signs ?? []).filter(text => !isInformationalSignPanel(text));
+  const signRules = regulatorySigns.flatMap(text => parseParkingRules(text, "nyc-signs"));
   const parsed = signRules
-    .filter(rule => rule.status !== "unknown")
+    // ParkNYC supplies the canonical paid schedule for meter blockfaces. Keep
+    // the linked sign in the completeness gate, but do not persist a duplicate
+    // paid rule that could conflict with Sunday/holiday meter suspension.
+    .filter(rule => rule.status !== "unknown" && !(row.has_meter && rule.status === "paid"))
     .map(rule => ({ ...rule, segmentId: row.id }));
 
-  const hasUnresolvedParkingSign = signRules.some(rule =>
-    rule.status === "unknown" && /NO |METER|PAY|PARKING|STANDING|STOPPING|BUS STOP|LOADING/.test(rule.reason.toUpperCase())
-  );
-  if (hasUnresolvedParkingSign) {
+  const hasUnresolvedRegulatorySign = signRules.some(rule => rule.status === "unknown");
+  if (hasUnresolvedRegulatorySign) {
     parsed.push({
       segmentId: row.id, status: "unknown", dayMask: 127, startMinute: 0,
       endMinute: 1440, confidence: 0.2,
-      reason: "One or more parking-related signs could not be resolved into a reliable schedule.",
+      reason: "One or more linked regulatory signs could not be resolved into a reliable schedule.",
       source: "nyc-signs"
     });
   }
 
+  let hasRecognizedMeterSchedule = false;
   if (row.has_meter) {
-    const meter = parseParkingRule(`METER ${row.paid_hours ?? ""}`, "nyc-meters");
-    parsed.push(meter.status === "paid" ? {
-      ...meter, segmentId: row.id, status: "paid",
-      confidence: Math.max(meter.confidence, 0.78),
-      reason: `Metered parking during ${row.paid_hours}.`
-    } : {
+    const meterRules = parseParkingRules(`METER ${row.paid_hours ?? ""}`, "nyc-meters")
+      .filter(rule => rule.status === "paid");
+    if (meterRules.length > 0) {
+      hasRecognizedMeterSchedule = true;
+      parsed.push(...meterRules.map(meter => ({
+        ...meter, segmentId: row.id, status: "paid" as const,
+        confidence: Math.max(meter.confidence, 0.78),
+        reason: `Metered parking during ${row.paid_hours}.`
+      })));
+    } else parsed.push({
       segmentId: row.id, status: "unknown", dayMask: 127, startMinute: 0,
       endMinute: 1440, confidence: 0.2,
       reason: row.paid_hours
         ? `Metered parking during ${row.paid_hours}.`
         : "NYC meter data confirms a meter, but its operating hours were unavailable.",
       source: "nyc-meters"
+    });
+  }
+
+  // This is an explicit all-day baseline, not an inference made at request
+  // time from a missing active rule. More restrictive recognized sign and
+  // meter windows still win in the interval classifier. Any unresolved linked
+  // regulatory sign prevents the baseline from being published.
+  if (row.has_meter && hasRecognizedMeterSchedule && regulatorySigns.length > 0 && !hasUnresolvedRegulatorySign) {
+    parsed.push({
+      segmentId: row.id,
+      status: "free",
+      dayMask: 127,
+      startMinute: 0,
+      endMinute: 1440,
+      confidence: 0.65,
+      reason: "Current linked NYC sign records and the ParkNYC meter schedule fully resolve this blockface; no payment or recognized prohibition is active outside their scheduled windows.",
+      source: PUBLIC_DATA_FREE_REFERENCE_SOURCE
     });
   }
 
@@ -89,6 +132,7 @@ export async function rebuildRules(): Promise<void> {
           split_part(s.blockface_key, '|', 1) || '|' || split_part(s.blockface_key, '|', 2) || '|' ||
           split_part(s.blockface_key, '|', 4) || '|' || split_part(s.blockface_key, '|', 3) AS key4_rev
         FROM curb_segments s
+        WHERE s.geometry_validated = true OR s.source = $1
       )
       SELECT sk.id::text, sk.paid_hours,
         COALESCE(m.has_meter, false) AS has_meter,
@@ -107,12 +151,13 @@ export async function rebuildRules(): Promise<void> {
             OR blockface_key4(blockface_key) = sk.key4_rev
         ) AS has_meter
       ) m ON true
-    `);
+    `, [`meters:${config.nycMeterDatasetId}`]);
 
     const rules = evidence.rows.flatMap(rulesForSegment);
     await client.query("BEGIN");
     await client.query("TRUNCATE TABLE curb_rules");
     await insertRules(client, rules);
+    await client.query("UPDATE curb_segments SET interpretation_version = 'parking-rules-v3-public-reference', updated_at = now()");
     await client.query("COMMIT");
     console.log(`[ingest:rules] complete. segments=${evidence.rowCount ?? 0} rules=${rules.length}`);
   } catch (error) {
@@ -127,3 +172,9 @@ if (require.main === module) {
   rebuildRules().then(async () => { await pool.end(); process.exit(0); })
     .catch(async error => { console.error("[ingest:rules] failed", error); await pool.end(); process.exit(1); });
 }
+
+export const rebuildRulesInternals = {
+  isInformationalSignPanel,
+  rulesForSegment,
+  PUBLIC_DATA_FREE_REFERENCE_SOURCE
+};

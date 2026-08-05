@@ -8,6 +8,22 @@ on:
 jobs:
   backend-web:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: parking_test
+          POSTGRES_PASSWORD: parking_test
+          POSTGRES_DB: parking_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U parking_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://parking_test:parking_test@127.0.0.1:5432/parking_test
+      RUN_DB_INTEGRATION: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,11 +37,25 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix backend
       - run: npm ci --prefix web
+      - run: npm run migrate
+        working-directory: backend
+      - run: npm run typecheck
+        working-directory: backend
+      - run: npm run lint
+        working-directory: web
       - run: npm test
       - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: backend
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm run test:e2e
+        working-directory: web
 
   ios:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - run: xcodebuild -project ParkNYCPrototype.xcodeproj -scheme ParkNYCPrototype -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - run: xcodebuild -project ParkNYCPrototype.xcodeproj -scheme ParkNYCPrototype -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build-for-testing

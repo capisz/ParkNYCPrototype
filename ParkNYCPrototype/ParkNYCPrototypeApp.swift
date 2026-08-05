@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 
 @main
-struct PidgeApp: App {
+struct NYCParkingPlannerApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Item.self,

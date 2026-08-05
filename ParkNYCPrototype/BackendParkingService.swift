@@ -6,6 +6,7 @@ enum BackendParkingError: LocalizedError {
     case invalidURL
     case badStatusCode(Int)
     case deviceLoopbackHost(String)
+    case configurationMissing
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +16,8 @@ enum BackendParkingError: LocalizedError {
             return "Backend returned HTTP \(statusCode)."
         case .deviceLoopbackHost(let hostURL):
             return "Backend URL \(hostURL) is loopback. On a physical iPhone, use your Mac LAN IP."
+        case .configurationMissing:
+            return "A secure NYC Parking Planner backend URL is required for this build."
         }
     }
 }
@@ -22,6 +25,7 @@ enum BackendParkingError: LocalizedError {
 final class BackendParkingService {
     private let session: URLSession
     private let baseURL: URL
+    private let hasRuntimeConfiguration: Bool
     private let iso8601: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -35,15 +39,21 @@ final class BackendParkingService {
         self.session = session
 
         let configured = baseURLString?.trimmingCharacters(in: .whitespacesAndNewlines)
+#if DEBUG
         let fallback = "http://127.0.0.1:8080"
-        let selected = (configured?.isEmpty == false ? configured : nil) ?? fallback
+#else
+        let fallback = "https://configuration-required.invalid"
+#endif
+        let selected = (configured?.isEmpty == false && configured?.contains("$(") == false ? configured : nil) ?? fallback
         self.baseURL = URL(string: selected) ?? URL(string: fallback)!
+        self.hasRuntimeConfiguration = selected != "https://configuration-required.invalid"
     }
 
     func fetchSegments(
         near coordinate: CLLocationCoordinate2D,
         radiusMeters: Int = 900,
-        asOf: Date = Date()
+        start: Date,
+        end: Date
     ) async throws -> [CurbSegment] {
         let bbox = BoundingBox(center: coordinate, radiusMeters: Double(radiusMeters))
         let fetched = try await fetchSegments(
@@ -51,7 +61,8 @@ final class BackendParkingService {
             sortedNear: coordinate,
             proximityRadiusMeters: radiusMeters,
             approximateZoom: approximateZoom(for: radiusMeters),
-            asOf: asOf
+            start: start,
+            end: end
         )
         let center = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         return fetched.filter { segment in
@@ -61,9 +72,138 @@ final class BackendParkingService {
         }
     }
 
+    func fetchRecommendations(
+        near coordinate: CLLocationCoordinate2D,
+        arrival: Date,
+        departure: Date,
+        preferences: ParkingRecommendationPreferences
+    ) async throws -> ParkingRecommendationResponse {
+        try validateRuntimeConfiguration()
+        if shouldRejectLoopbackOnDevice(baseURL: baseURL) {
+            throw BackendParkingError.deviceLoopbackHost(baseURL.absoluteString)
+        }
+
+        var request = URLRequest(url: plansURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(BackendPlanRequest(
+            origin: nil,
+            destination: BackendPlanCoordinate(
+                latitude: coordinate.latitude,
+                longitude: coordinate.longitude,
+                label: nil
+            ),
+            arriveBy: iso8601.string(from: arrival),
+            leaveAt: iso8601.string(from: departure),
+            preferences: BackendPlanPreferences(
+                allowPaid: preferences.allowPaid,
+                includeGarages: preferences.allowGarages,
+                maxWalkMinutes: preferences.maxWalkMinutes,
+                transit: preferences.allowTransit,
+                accessibleOnly: preferences.accessibleOnly,
+                transitModes: ["SUBWAY", "BUS", "SIR", "LIRR", "METRO_NORTH"]
+            )
+        ))
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw BackendParkingError.badStatusCode(-1)
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw BackendParkingError.badStatusCode(httpResponse.statusCode)
+        }
+        return try JSONDecoder().decode(ParkingRecommendationResponse.self, from: data)
+    }
+
+    func fetchHydrantCoordinates(in region: MKCoordinateRegion) async throws -> [CLLocationCoordinate2D] {
+        try validateRuntimeConfiguration()
+        if shouldRejectLoopbackOnDevice(baseURL: baseURL) {
+            throw BackendParkingError.deviceLoopbackHost(baseURL.absoluteString)
+        }
+
+        let bounds = BoundingBox(region: region)
+        guard var components = URLComponents(url: hydrantsURL, resolvingAgainstBaseURL: false) else {
+            throw BackendParkingError.invalidURL
+        }
+        components.queryItems = [
+            URLQueryItem(name: "minLat", value: decimalText(bounds.minLat)),
+            URLQueryItem(name: "minLng", value: decimalText(bounds.minLng)),
+            URLQueryItem(name: "maxLat", value: decimalText(bounds.maxLat)),
+            URLQueryItem(name: "maxLng", value: decimalText(bounds.maxLng))
+        ]
+        guard let url = components.url else {
+            throw BackendParkingError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw BackendParkingError.badStatusCode(-1)
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw BackendParkingError.badStatusCode(httpResponse.statusCode)
+        }
+
+        let payload = try JSONDecoder().decode(BackendHydrantResponse.self, from: data)
+        return payload.features.compactMap(\.pointCoordinate)
+    }
+
+    func fetchLicensedFacilities(
+        near coordinate: CLLocationCoordinate2D,
+        radiusMeters: Int = 1_500
+    ) async throws -> [GarageOption] {
+        try validateRuntimeConfiguration()
+        if shouldRejectLoopbackOnDevice(baseURL: baseURL) {
+            throw BackendParkingError.deviceLoopbackHost(baseURL.absoluteString)
+        }
+        guard var components = URLComponents(url: facilitiesURL, resolvingAgainstBaseURL: false) else {
+            throw BackendParkingError.invalidURL
+        }
+        components.queryItems = [
+            URLQueryItem(name: "lat", value: decimalText(coordinate.latitude)),
+            URLQueryItem(name: "lng", value: decimalText(coordinate.longitude)),
+            URLQueryItem(name: "radius", value: String(radiusMeters))
+        ]
+        guard let url = components.url else { throw BackendParkingError.invalidURL }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw BackendParkingError.badStatusCode(-1)
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw BackendParkingError.badStatusCode(httpResponse.statusCode)
+        }
+        let payload = try JSONDecoder().decode(BackendFacilitiesResponse.self, from: data)
+        let center = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        return payload.facilities.map { facility in
+            let facilityCoordinate = CLLocationCoordinate2D(latitude: facility.latitude, longitude: facility.longitude)
+            let distance = center.distance(from: CLLocation(latitude: facility.latitude, longitude: facility.longitude))
+            return GarageOption(
+                name: facility.name,
+                address: facility.address,
+                coordinate: facilityCoordinate,
+                distanceMeters: distance,
+                phoneNumber: facility.phone,
+                licenseNumber: facility.licenseNumber,
+                licenseStatus: facility.licenseStatus,
+                licenseExpiresAt: facility.licenseExpiresAt
+            )
+        }
+        .sorted { $0.distanceMeters < $1.distanceMeters }
+    }
+
     func fetchSegments(
         in region: MKCoordinateRegion,
-        asOf: Date = Date()
+        start: Date,
+        end: Date
     ) async throws -> [CurbSegment] {
         let bbox = BoundingBox(region: region)
         return try await fetchSegments(
@@ -71,7 +211,8 @@ final class BackendParkingService {
             sortedNear: region.center,
             proximityRadiusMeters: nil,
             approximateZoom: nil,
-            asOf: asOf
+            start: start,
+            end: end
         )
     }
 
@@ -80,8 +221,10 @@ final class BackendParkingService {
         sortedNear coordinate: CLLocationCoordinate2D,
         proximityRadiusMeters: Int?,
         approximateZoom: Double?,
-        asOf: Date
+        start: Date,
+        end: Date
     ) async throws -> [CurbSegment] {
+        try validateRuntimeConfiguration()
         if shouldRejectLoopbackOnDevice(baseURL: baseURL) {
             throw BackendParkingError.deviceLoopbackHost(baseURL.absoluteString)
         }
@@ -95,7 +238,8 @@ final class BackendParkingService {
             URLQueryItem(name: "minLng", value: decimalText(bbox.minLng)),
             URLQueryItem(name: "maxLat", value: decimalText(bbox.maxLat)),
             URLQueryItem(name: "maxLng", value: decimalText(bbox.maxLng)),
-            URLQueryItem(name: "asOf", value: iso8601.string(from: asOf))
+            URLQueryItem(name: "start", value: iso8601.string(from: start)),
+            URLQueryItem(name: "end", value: iso8601.string(from: end))
         ]
         if let proximityRadiusMeters, let approximateZoom {
             queryItems.append(contentsOf: [
@@ -141,13 +285,33 @@ final class BackendParkingService {
     }
 
     private var viewportURL: URL {
-        if baseURL.path.lowercased().hasSuffix("/api/parking/viewport") {
-            return baseURL
-        }
         return baseURL
             .appendingPathComponent("api")
-            .appendingPathComponent("parking")
+            .appendingPathComponent("v1")
+            .appendingPathComponent("curb")
             .appendingPathComponent("viewport")
+    }
+
+    private var plansURL: URL {
+        baseURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("v1")
+            .appendingPathComponent("plans")
+    }
+
+    private var hydrantsURL: URL {
+        baseURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("v1")
+            .appendingPathComponent("hydrants")
+            .appendingPathComponent("viewport")
+    }
+
+    private var facilitiesURL: URL {
+        baseURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("v1")
+            .appendingPathComponent("facilities")
     }
 
     private func approximateZoom(for radiusMeters: Int) -> Double {
@@ -175,7 +339,7 @@ final class BackendParkingService {
             name = feature.properties.blockfaceKey?.trimmedNonEmpty ?? "NYC curb segment"
         }
 
-        let explanation = feature.properties.ruleSummary?.trimmedNonEmpty ?? feature.properties.reason?.trimmedNonEmpty ?? defaultExplanation(for: status)
+        let explanation = feature.properties.ruleSummary?.trimmedNonEmpty ?? defaultExplanation(for: status)
         let rateText = feature.properties.meterRate?.trimmedNonEmpty
         let paidHoursText = feature.properties.paidHours?.trimmedNonEmpty
 
@@ -190,8 +354,8 @@ final class BackendParkingService {
             rateText: rateText,
             confidence: feature.properties.confidence ?? 0.25,
             ruleSummary: explanation,
-            sourceFreshness: feature.properties.sourceFreshness,
-            sourceName: feature.properties.source
+            sourceFreshness: feature.properties.sourceUpdatedAt,
+            sourceName: feature.properties.sourceVersion
         )
     }
 
@@ -201,7 +365,7 @@ final class BackendParkingService {
             return .legalNow
         case "paid":
             return .caution
-        case "no_parking":
+        case "cannot_park":
             return .illegalNow
         default:
             return .unknown
@@ -211,13 +375,13 @@ final class BackendParkingService {
     private func defaultExplanation(for status: ParkingStatus) -> String {
         switch status {
         case .legalNow:
-            return "Free parking appears allowed right now."
+            return "The complete requested interval is classified as free."
         case .caution:
-            return "Parking appears allowed right now with payment required."
+            return "The complete requested interval is resolved and requires payment."
         case .illegalNow:
-            return "Parking appears restricted right now."
+            return "A confirmed prohibition overlaps the requested interval."
         case .unknown:
-            return "Parking rules are unclear here. Confirm posted signs."
+            return "The interval, evidence, or curb geometry is unresolved. Check posted signs."
         }
     }
 
@@ -233,6 +397,50 @@ final class BackendParkingService {
         return host == "127.0.0.1" || host == "localhost"
         #endif
     }
+
+    private func validateRuntimeConfiguration() throws {
+        guard hasRuntimeConfiguration else {
+            throw BackendParkingError.configurationMissing
+        }
+    }
+}
+
+private struct BackendPlanCoordinate: Encodable {
+    let latitude: Double
+    let longitude: Double
+    let label: String?
+}
+
+private struct BackendPlanPreferences: Encodable {
+    let allowPaid: Bool
+    let includeGarages: Bool
+    let maxWalkMinutes: Int
+    let transit: Bool
+    let accessibleOnly: Bool
+    let transitModes: [String]
+}
+
+private struct BackendPlanRequest: Encodable {
+    let origin: BackendPlanCoordinate?
+    let destination: BackendPlanCoordinate
+    let arriveBy: String
+    let leaveAt: String
+    let preferences: BackendPlanPreferences
+}
+
+private struct BackendFacilitiesResponse: Decodable {
+    let facilities: [BackendFacility]
+}
+
+private struct BackendFacility: Decodable {
+    let name: String
+    let address: String
+    let latitude: Double
+    let longitude: Double
+    let phone: String?
+    let licenseNumber: String
+    let licenseStatus: String
+    let licenseExpiresAt: String?
 }
 
 private struct BoundingBox {
@@ -275,6 +483,48 @@ private struct BackendViewportResponse: Decodable {
     let features: [BackendFeature]
 }
 
+private struct BackendHydrantResponse: Decodable {
+    let features: [BackendHydrantFeature]
+}
+
+private struct BackendHydrantFeature: Decodable {
+    let geometry: BackendHydrantGeometry
+    let properties: BackendHydrantProperties?
+
+    var pointCoordinate: CLLocationCoordinate2D? {
+        guard geometry.type == "Point",
+              properties?.kind == nil || properties?.kind == "hydrant",
+              geometry.coordinates.count >= 2 else {
+            return nil
+        }
+        let coordinate = CLLocationCoordinate2D(
+            latitude: geometry.coordinates[1],
+            longitude: geometry.coordinates[0]
+        )
+        return CLLocationCoordinate2DIsValid(coordinate) ? coordinate : nil
+    }
+}
+
+private struct BackendHydrantGeometry: Decodable {
+    let type: String
+    let coordinates: [Double]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(String.self, forKey: .type)
+        coordinates = (try? container.decode([Double].self, forKey: .coordinates)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case coordinates
+    }
+}
+
+private struct BackendHydrantProperties: Decodable {
+    let kind: String?
+}
+
 private struct BackendFeature: Decodable {
     let geometry: BackendGeometry
     let properties: BackendProperties
@@ -306,7 +556,7 @@ private struct BackendGeometry: Decodable {
         }
     }
 
-    private static func coordinate(from pair: [Double]) -> CLLocationCoordinate2D? {
+    nonisolated private static func coordinate(from pair: [Double]) -> CLLocationCoordinate2D? {
         guard pair.count >= 2 else { return nil }
         let longitude = pair[0]
         let latitude = pair[1]
@@ -320,12 +570,14 @@ private struct BackendGeometry: Decodable {
 private struct BackendProperties: Decodable {
     let blockfaceKey: String?
     let status: String?
-    let reason: String?
     let confidence: Double?
+    let coverage: String?
+    let geometryValidated: Bool?
     let ruleSummary: String?
     let nextChange: String?
-    let sourceFreshness: String?
-    let source: String?
+    let sourceVersion: String?
+    let sourceUpdatedAt: String?
+    let interpretationVersion: String?
     let onStreet: String?
     let fromStreet: String?
     let toStreet: String?

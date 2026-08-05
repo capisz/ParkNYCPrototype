@@ -23,12 +23,14 @@ final class ParkNYCPrototypeUITests: XCTestCase {
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testAnonymousPlannerOpensAtDestinationFirstFlow() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        XCTAssertTrue(app.navigationBars["NYC Parking Planner"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Where are you going?"].exists)
+        XCTAssertFalse(app.buttons["Log In"].exists)
+        XCTAssertFalse(app.buttons["Sign Up"].exists)
     }
 
     @MainActor

@@ -7,20 +7,29 @@ import MapKit
 final class CurbViewModel: ObservableObject {
     @Published var segments: [CurbSegment] = []
     @Published var lastUpdated: Date?
-    @Published var sourceLabel: String = "Pidge backend (live)"
+    @Published var sourceLabel: String = "NYC Parking Planner advisory data"
+    @Published var errorMessage: String?
+    @Published var isLoading = false
+    @Published var isShowingStaleData = false
 
     private let backendService = BackendParkingService()
-    private let openDataFallbackService = NYCParkingOpenDataService()
     private let defaultRadiusMeters = 550
     private let minimumRadiusMeters = 180
     private let maximumRadiusMeters = 1200
     private let maximumStreetDataShortEdgeMeters: Double = 2600
-    private let backendAugmentThreshold = 20
     private let minimumRefreshDistanceMeters: Double = 120
     private let minimumRefreshInterval: TimeInterval = 8
     private var refreshTask: Task<Void, Never>?
     private var lastRefreshRegion: MKCoordinateRegion?
     private var lastRefreshDate: Date?
+    private var evaluationStart = Date()
+    private var evaluationEnd = Date().addingTimeInterval(60 * 60)
+
+    func setEvaluationInterval(start: Date, end: Date) {
+        evaluationStart = start
+        evaluationEnd = end
+        lastRefreshDate = nil
+    }
 
     func refresh(near coordinate: CLLocationCoordinate2D, force: Bool = false) {
         refresh(near: coordinate, radiusMeters: defaultRadiusMeters, force: force)
@@ -42,8 +51,12 @@ final class CurbViewModel: ObservableObject {
         guard CLLocationCoordinate2DIsValid(region.center) else { return }
         if visibleShortEdgeMeters(for: region) > maximumStreetDataShortEdgeMeters {
             refreshTask?.cancel()
+            refreshTask = nil
             segments = []
             sourceLabel = "Zoom in to street level"
+            errorMessage = nil
+            isLoading = false
+            isShowingStaleData = false
             return
         }
         let radius = inferredVisibleRadiusMeters(for: region)
@@ -67,83 +80,43 @@ final class CurbViewModel: ObservableObject {
 
         refreshTask?.cancel()
         refreshTask = Task { @MainActor in
+            isLoading = true
+            errorMessage = nil
             do {
                 let fetched = try await backendService.fetchSegments(
                     near: center,
-                    radiusMeters: radiusMeters
+                    radiusMeters: radiusMeters,
+                    start: evaluationStart,
+                    end: evaluationEnd
                 )
                 guard !Task.isCancelled else { return }
 
-                if fetched.isEmpty {
-                    let fallback = try await fetchOpenDataSegments(
-                        near: center,
-                        radiusMeters: radiusMeters
-                    )
-                    guard !Task.isCancelled else { return }
-
-                    segments = fallback
-                    sourceLabel = fallback.isEmpty ? "Pidge backend (no nearby rows)" : "NYC Open Data fallback (live)"
-                } else if fetched.count < backendAugmentThreshold {
-                    var merged = fetched
-                    var seen = Set(fetched.map(segmentSignature))
-
-                    do {
-                        let fallback = try await fetchOpenDataSegments(
-                            near: center,
-                            radiusMeters: radiusMeters
-                        )
-                        guard !Task.isCancelled else { return }
-
-                        for segment in fallback {
-                            let signature = segmentSignature(segment)
-                            if seen.insert(signature).inserted {
-                                merged.append(segment)
-                            }
-                        }
-                        segments = merged
-                        sourceLabel = merged.count > fetched.count ? "Pidge backend + Open Data augment" : "Pidge backend (live)"
-                    } catch {
-                        segments = fetched
-                        sourceLabel = "Pidge backend (live)"
-                    }
-                } else {
-                    segments = fetched
-                    sourceLabel = "Pidge backend (live)"
-                }
+                segments = fetched
+                isShowingStaleData = false
+                sourceLabel = fetched.isEmpty ? "No curb rows in the visible area" : "NYC advisory curb classifications"
+                lastUpdated = Date()
             } catch is CancellationError {
+                isLoading = false
                 return
             } catch {
-                let backendError = error
-                do {
-                    let fetched = try await fetchOpenDataSegments(
-                        near: center,
-                        radiusMeters: radiusMeters
-                    )
-                    guard !Task.isCancelled else { return }
-
-                    segments = fetched
-                    sourceLabel = fetched.isEmpty ? "NYC Open Data fallback (no nearby rows)" : "NYC Open Data fallback (live)"
-                } catch is CancellationError {
-                    return
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    print("Backend fetch failed: \(backendError.localizedDescription)")
-                    print("Live fallback fetch failed: \(error.localizedDescription)")
-                    segments = fallbackSegments(near: center, radiusMeters: radiusMeters)
-                    sourceLabel = "Sample fallback (network issue)"
-                }
+                guard !Task.isCancelled else { return }
+                errorMessage = "Curb data unavailable: \(error.localizedDescription)"
+                isShowingStaleData = !segments.isEmpty
+                sourceLabel = segments.isEmpty ? "Curb data unavailable" : "Previously loaded curb data • refresh failed"
             }
 
             lastRefreshRegion = regionForThrottling
             lastRefreshDate = Date()
-            lastUpdated = Date()
+            isLoading = false
         }
     }
 
     func loadAll() {
         let sample = NYCSampleLoader.load()
         segments = sample
-        sourceLabel = "Sample fallback"
+        sourceLabel = "Developer sample preview"
+        errorMessage = nil
+        isShowingStaleData = false
         lastUpdated = Date()
     }
 
@@ -174,19 +147,6 @@ final class CurbViewModel: ObservableObject {
         )
 
         return latZoomShift < 0.22 && lonZoomShift < 0.22
-    }
-
-    private func fetchOpenDataSegments(
-        near coordinate: CLLocationCoordinate2D,
-        radiusMeters: Int
-    ) async throws -> [CurbSegment] {
-        let radius = max(minimumRadiusMeters, min(maximumRadiusMeters, radiusMeters))
-        let limit = radius >= 900 ? 120 : 80
-        return try await openDataFallbackService.fetchSegments(
-            near: coordinate,
-            radiusMeters: radius,
-            limit: limit
-        )
     }
 
     private func inferredVisibleRadiusMeters(for region: MKCoordinateRegion) -> Int {
@@ -220,32 +180,6 @@ final class CurbViewModel: ObservableObject {
         return abs(newValue - oldValue) / oldValue
     }
 
-    private func segmentSignature(_ segment: CurbSegment) -> String {
-        let first = segment.coordinates.first ?? midpoint(of: segment.coordinates)
-        let last = segment.coordinates.last ?? midpoint(of: segment.coordinates)
-        let fLat = roundedCoord(first.latitude)
-        let fLon = roundedCoord(first.longitude)
-        let lLat = roundedCoord(last.latitude)
-        let lLon = roundedCoord(last.longitude)
-        return "\(segment.name.uppercased())|\(fLat)|\(fLon)|\(lLat)|\(lLon)"
-    }
-
-    private func roundedCoord(_ value: Double) -> String {
-        String(format: "%.5f", value)
-    }
-
-    private func fallbackSegments(near coordinate: CLLocationCoordinate2D, radiusMeters: Int) -> [CurbSegment] {
-        let all = NYCSampleLoader.load()
-        let center = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-
-        let nearby = all.filter { segment in
-            let mid = midpoint(of: segment.coordinates)
-            let loc = CLLocation(latitude: mid.latitude, longitude: mid.longitude)
-            return center.distance(from: loc) <= Double(radiusMeters)
-        }
-
-        return nearby.isEmpty ? all : nearby
-    }
 }
 
 func midpoint(of coords: [CLLocationCoordinate2D]) -> CLLocationCoordinate2D {

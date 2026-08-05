@@ -1,15 +1,19 @@
 import { pool } from "../db";
 import { ingestGeometry } from "./ingestGeometry";
+import { ingestFacilities } from "./ingestFacilities";
 import { ingestMeters } from "./ingestMeters";
 import { ingestSigns } from "./ingestSigns";
 import { rebuildRules } from "./rebuildRules";
 
 async function main(): Promise<void> {
-  console.log("[ingest:all] starting geometry...");
-  await ingestGeometry();
+  console.log("[ingest:all] starting active licensed facilities...");
+  await ingestFacilities();
 
   console.log("[ingest:all] starting meters...");
   await ingestMeters();
+
+  console.log("[ingest:all] starting geometry context...");
+  await ingestGeometry();
 
   console.log("[ingest:all] starting signs...");
   await ingestSigns();

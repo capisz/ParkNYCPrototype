@@ -1,125 +1,62 @@
-# Pidge Parking Backend (NYC)
+# NYC Parking Planner API
 
-This service ingests NYC open parking + street geometry data into Postgres/PostGIS, builds per-blockface parking rules, and serves viewport GeoJSON for map coloring:
+The backend is the sole parking-rule authority for the web and iOS clients. It publishes interval-aware advisory results from atomic source snapshots and fails closed when evidence, freshness, interpretation, or curb geometry is unresolved.
 
-- `no_parking` => red
-- `paid` => yellow
-- `free` => green
-- `unknown` => gray
+## Public contract
 
-## 1) Prerequisites
+- `POST /api/v1/plans`
+- `GET /api/v1/search` and `GET /api/v1/search/autocomplete`
+- `GET /api/v1/curb/viewport?minLat&minLng&maxLat&maxLng&start&end&detail=map`
+- `GET /api/v1/curb/:segmentId?start&end` (full evidence for one selected feature)
+- `GET /api/v1/facilities?lat&lng&radius`
+- `GET /api/v1/data-status`
+- `GET /openapi.json`
+- `GET /livez` (minimal public liveness)
+- `GET /readyz` (Bearer-token protected operational readiness)
 
-- Node.js 20+
-- Postgres 14+ running locally
-- PostGIS extension available
-- Optional but recommended: NYC Open Data app token
+`ParkingStatus` is `cannot_park | paid | free | unknown`. Unknown or prohibited curbs are not eligible recommendations. A free result requires full recognized evidence over the entire requested interval; a missing restriction is never treated as permission.
 
-## 2) Environment
+Interactive maps should request `detail=map`; the compact response omits evidence and version arrays that MapLibre does not need. Selecting a feature fetches its full detail by ID. Viewport work is capped by zoom, geometry is clipped and generalized to sub-meter/map-scale precision, identical proximity requests coalesce in a 20-second process cache, and responses permit a short private browser cache. The API emits `Server-Timing`, while structured service logs split freshness, PostGIS, and classification time. The PostGIS query never publishes pavement-centerline context: it scans only approved geometry or the active official meter-blockface reference snapshot.
 
-Copy example env and fill values:
+Destination search normally proxies the configured NYC geocoder. A small reviewed degraded-mode directory resolves only explicit landmark aliases and labeled neighborhood centers when an exact curated match is entered, avoiding an upstream wait without pretending to geocode arbitrary addresses.
 
-```bash
-cd /Users/admin/Desktop/projects/ParkNYCPrototype/backend
-cp .env.example .env
-```
+## Environment
 
-Set `DATABASE_URL` to your real DB credentials.
+Copy `.env.example` to `.env`, set `DATABASE_URL`, and use a unique `OPERATIONS_TOKEN`. Production also requires a City-managed `NYC_APP_TOKEN`. Feature flags default closed in production.
 
-## 3) Postgres setup
-
-For the repository-managed, no-`sudo` macOS cluster, run from the repository
-root:
-
-```bash
-npm run db:bootstrap
-```
-
-This creates an isolated cluster under
-`~/Library/Application Support/Pidge/Postgres18` on port `55432`.
-
-For an independently managed PostgreSQL server, open `psql` first:
-
-
-```bash
-psql -U postgres
-```
-
-Then run:
-
-```sql
-CREATE ROLE pidge_app WITH LOGIN PASSWORD 'CHANGE_ME';
-CREATE DATABASE pidge_parking OWNER pidge_app;
-\c pidge_parking
-CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-\q
-```
-
-## 4) Install + migrate + ingest
-
-```bash
-cd /Users/admin/Desktop/projects/ParkNYCPrototype/backend
+```sh
 npm install
 npm run migrate
 npm run ingest:all
+npm run dev
 ```
 
-If you already ingested older data before geometry support was added, run this again so citywide geometry is loaded:
+Individual snapshot jobs are available for facilities, meters, geometry context, signs, and rule rebuilding. Successful full snapshots atomically replace the active source version and delete source records that disappeared. A failed or partial snapshot does not replace the prior published version.
 
-```bash
-npm run migrate
-npm run ingest:geometry
-npm run ingest:rules
-```
-
-You can rerun ingestion later:
-
-```bash
+```sh
+npm run ingest:facilities
 npm run ingest:meters
 npm run ingest:geometry
 npm run ingest:signs
 npm run ingest:rules
 ```
 
-## 5) Start API
+## Source safety gates
 
-```bash
-npm run dev
-```
+| Dataset | Maximum age | Behavior after gate |
+|---|---:|---|
+| Parking signs | 48 hours | dependent curb classifications become gray |
+| DCWP licensed facilities | 14 days | facility directory returns unavailable |
+| Meters and geometry context | 62 days | dependent curb classifications become gray |
 
-Health check:
+Street Pavement Ratings data is context only and is never marked as DOT-approved curb-side geometry. The hydrant viewport publishes authoritative NYC DEP points with approximate 15-foot advisory radius circles. Those circles are not curb-linked extents, and exact red curb segments remain disabled pending validated DOT side linkage.
 
-```bash
-curl -s "http://localhost:8080/health"
-```
+For the local pilot, the official NYC DOT ParkNYC Block Faces snapshot provides a bounded geometry fallback. A blockface may be drawn yellow only when the active meter snapshot is fresh, its side is unambiguous, its all-vehicle paid schedule covers the complete requested interval, and no active result depends on sign interpretation. It may be drawn reference-only red when a fresh signs snapshot supplies a supported, high-confidence no-parking rule that overlaps the interval. It may be drawn reference-only green outside those scheduled windows only when a fresh signs snapshot is linked, every regulatory sign is recognized, and the meter schedule is parseable for the full interval. Informational sign companions such as Pay-by-Cell locator and bus route panels do not create curb rules. Unresolved regulatory signs remain gray. Every fallback line remains `geometryValidated: false` and never recommendation-eligible: it is an informational blockface estimate, not a claim about exact curb clearance or physical space availability. Meter pages are staged in bulk so loading the roughly citywide 11,000-row source does not issue one database write per row.
 
-Proximity API example:
+The interval evaluator includes a reviewed 2026 NYC DOT Alternate Side Parking suspension snapshot. It distinguishes ordinary ASP-only suspensions, Sundays, and major legal holidays, and only suppresses rules explicitly tagged as alternate-side or meter rules. Years without a reviewed snapshot remain unknown. Emergency suspensions still require an approved live NYC 311 feed; users are told to verify 311 and posted signs.
 
-```bash
-curl -s "http://localhost:8080/api/parking/viewport?minLat=40.740&minLng=-74.000&maxLat=40.760&maxLng=-73.970&centerLat=40.750&centerLng=-73.985&radiusMeters=450&zoom=16.5"
-```
+## Operations
 
-Response is GeoJSON `FeatureCollection` with `properties.status` and `properties.color` for direct map rendering.
-`http://localhost:8080/` now returns a small route index; it is no longer a 404.
+Liveness contains no counts, versions, schema, or ingestion details. Protected readiness exposes database, migration, feature-flag, and latest-ingestion state for operations staff. Logs include request IDs, method, path without query coordinates, response status, and duration. Exact origin/destination coordinates are not logged.
 
-## Proximity loading
-
-- City-scale curb requests are rejected before PostGIS is queried.
-- Street overlays begin at client zoom `16` and are clipped in PostGIS to a
-  `100-1500 m` circle around the current map center.
-- Panning cancels stale browser requests; `moveend` loads only the new scope.
-- Hydrants and their 15-foot curb restrictions begin at zoom `19`.
-- Green requires either an explicit permission sign or a reliable known
-  schedule with no active restriction and no unresolved parking evidence.
-  Missing data remains gray rather than being inferred as free.
-
-## Coverage notes
-
-- Geometry source is `6yyb-pb25` (Street Pavement Rating roadway segments), giving near-citywide street line coverage.
-- Parking rules are matched using exact blockface keys plus side-agnostic (`borough|on|from|to`) matching, so sign-based rules can classify non-meter segments.
-
-## Notes
-
-- The parser supports structured weekday, overnight, noon, midnight, meter,
-  and anytime schedules, but additional NYC sign grammar still needs fixtures.
-- If NYC API rate limits you, set `NYC_APP_TOKEN` in `.env`.
+OpenTripPlanner and MTA credentials are configuration boundaries only. Transit remains disabled until the isolated router, required feed agreements, realtime lag rules, round-trip parking interval validation, and accessibility corpus are complete.
