@@ -14,7 +14,7 @@ The backend is the sole parking-rule authority for the web and iOS clients. It p
 - `GET /livez` (minimal public liveness)
 - `GET /readyz` (Bearer-token protected operational readiness)
 
-`ParkingStatus` is `cannot_park | paid | free | unknown`. Unknown or prohibited curbs are not eligible recommendations. A free result requires full recognized evidence over the entire requested interval; a missing restriction is never treated as permission.
+`ParkingStatus` is `cannot_park | paid | free | unknown`. Unknown or prohibited curbs are not eligible recommendations. `free` means likely legally free for the complete requested interval, not that a physical space is vacant. It requires current linked sign evidence, a fully recognized schedule, and no active payment or recognized restriction; missing evidence is never treated as permission.
 
 Interactive maps should request `detail=map`; the compact response omits evidence and version arrays that MapLibre does not need. Selecting a feature fetches its full detail by ID. Viewport work is capped by zoom, geometry is clipped and generalized to sub-meter/map-scale precision, identical proximity requests coalesce in a 20-second process cache, and responses permit a short private browser cache. The API emits `Server-Timing`, while structured service logs split freshness, PostGIS, and classification time. The PostGIS query never publishes pavement-centerline context: it scans only approved geometry or the active official meter-blockface reference snapshot.
 
@@ -39,7 +39,10 @@ npm run ingest:meters
 npm run ingest:geometry
 npm run ingest:signs
 npm run ingest:rules
+npm run ingest:refresh-signs
 ```
+
+Local development checks the official signs dataset revision at startup and then every `SIGN_REFRESH_MINUTES` (six hours by default). It imports and rebuilds curb rules only when the upstream revision changes. Set `ENABLE_SIGN_REFRESH=false` to disable this scheduler; production should run the same command from an authenticated scheduled job.
 
 ## Source safety gates
 

@@ -6,6 +6,7 @@ import helmet from "helmet";
 import { config } from "./config";
 import { pool } from "./db";
 import { openApiDocument } from "./openapi";
+import { startSignRefreshScheduler } from "./jobs/refreshSigns";
 import externalRoutes from "./routes/external";
 import parkingRoutes from "./routes/parking";
 
@@ -82,7 +83,8 @@ export function createApp() {
       const database = await pool.query("SELECT 1 AS ready");
       const runs = await pool.query(`
         SELECT DISTINCT ON (dataset_key)
-          dataset_key, source_dataset_id, status, source_updated_at, published_at, row_count, checksum
+          dataset_key, source_dataset_id, status, source_updated_at, source_checked_at,
+          published_at, row_count, checksum
         FROM ingestion_runs
         ORDER BY dataset_key, started_at DESC
       `);
@@ -113,6 +115,7 @@ export function createApp() {
 
 async function start(): Promise<void> {
   const app = createApp();
+  const stopSignRefresh = startSignRefreshScheduler();
   const server = app.listen(config.port, () => {
     console.log(JSON.stringify({
       timestamp: new Date().toISOString(),
@@ -124,6 +127,7 @@ async function start(): Promise<void> {
 
   const shutdown = async (signal: string) => {
     console.log(JSON.stringify({ timestamp: new Date().toISOString(), level: "info", event: "shutdown", signal }));
+    stopSignRefresh();
     server.close(async () => {
       await pool.end();
       process.exit(0);

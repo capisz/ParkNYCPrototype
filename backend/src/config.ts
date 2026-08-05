@@ -43,6 +43,11 @@ export const config = {
   nycMaxPages: toInt(process.env.NYC_MAX_PAGES, 0),
   allowPartialIngest: toBoolean(process.env.ALLOW_PARTIAL_INGEST, false),
   trustMeterGeometry: toBoolean(process.env.TRUST_METER_GEOMETRY, false),
+  enableSignRefresh: toBoolean(
+    process.env.ENABLE_SIGN_REFRESH,
+    process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test"
+  ),
+  signRefreshMinutes: Math.max(15, toInt(process.env.SIGN_REFRESH_MINUTES, 360)),
   features: {
     curbGuidance: toBoolean(process.env.ENABLE_CURB_GUIDANCE, process.env.NODE_ENV !== "production"),
     garages: toBoolean(process.env.ENABLE_GARAGES, process.env.NODE_ENV !== "production"),

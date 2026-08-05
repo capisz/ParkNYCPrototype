@@ -375,7 +375,7 @@ final class BackendParkingService {
     private func defaultExplanation(for status: ParkingStatus) -> String {
         switch status {
         case .legalNow:
-            return "The complete requested interval is classified as free."
+            return "The complete requested interval is likely free; verify posted signs."
         case .caution:
             return "The complete requested interval is resolved and requires payment."
         case .illegalNow:

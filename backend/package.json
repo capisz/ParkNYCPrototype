@@ -13,6 +13,7 @@
     "ingest:meters": "tsx src/jobs/ingestMeters.ts",
     "ingest:geometry": "tsx src/jobs/ingestGeometry.ts",
     "ingest:signs": "tsx src/jobs/ingestSigns.ts",
+    "ingest:refresh-signs": "tsx src/jobs/refreshSigns.ts",
     "ingest:facilities": "tsx src/jobs/ingestFacilities.ts",
     "ingest:rules": "tsx src/jobs/rebuildRules.ts",
     "ingest:all": "tsx src/jobs/ingestAll.ts",

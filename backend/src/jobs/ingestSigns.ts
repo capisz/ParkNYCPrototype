@@ -15,9 +15,16 @@ type SignStageRow = {
   blockfaceKey: string;
   orderNumber: string | null;
   recordType: string | null;
+  orderType: string | null;
   signCode: string | null;
   signDescription: string | null;
   orderCompletedOnDate: string | null;
+  signLocation: string | null;
+  distanceFromIntersection: number | null;
+  arrowDirection: string | null;
+  facingDirection: string | null;
+  signXCoord: number | null;
+  signYCoord: number | null;
   payload: string;
 };
 
@@ -33,16 +40,32 @@ function toDateOrNull(value: string | null): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
 }
 
+function asNumber(value: unknown): number | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function buildFingerprint(input: {
   blockfaceKey: string;
   orderNumber: string | null;
   signCode: string | null;
   signDescription: string | null;
   recordType: string | null;
+  orderType: string | null;
+  signLocation: string | null;
+  distanceFromIntersection: number | null;
+  arrowDirection: string | null;
+  facingDirection: string | null;
+  signXCoord: number | null;
+  signYCoord: number | null;
 }): string {
   return createHash("sha1").update([
     input.blockfaceKey, input.orderNumber ?? "", input.signCode ?? "",
-    input.signDescription ?? "", input.recordType ?? ""
+    input.signDescription ?? "", input.recordType ?? "", input.orderType ?? "",
+    input.signLocation ?? "", input.distanceFromIntersection?.toString() ?? "",
+    input.arrowDirection ?? "", input.facingDirection ?? "",
+    input.signXCoord?.toFixed(7) ?? "", input.signYCoord?.toFixed(7) ?? ""
   ].join("|")).digest("hex");
 }
 
@@ -57,14 +80,33 @@ function toSignStageRow(row: Record<string, unknown>): SignStageRow | null {
   const signCode = asString(row.sign_code);
   const signDescription = asString(row.sign_description);
   const recordType = asString(row.record_type);
+  const orderType = asString(row.order_type);
+  const signLocation = asString(row.sign_location);
+  const distanceFromIntersection = asNumber(row.distance_from_intersection);
+  const arrowDirection = asString(row.arrow_direction);
+  const facingDirection = asString(row.facing_direction);
+  const signXCoord = asNumber(row.sign_x_coord);
+  const signYCoord = asNumber(row.sign_y_coord);
+  const fingerprintInput = {
+    blockfaceKey, orderNumber, signCode, signDescription, recordType, orderType,
+    signLocation, distanceFromIntersection, arrowDirection, facingDirection,
+    signXCoord, signYCoord
+  };
   return {
-    fingerprint: buildFingerprint({ blockfaceKey, orderNumber, signCode, signDescription, recordType }),
+    fingerprint: buildFingerprint(fingerprintInput),
     blockfaceKey,
     orderNumber,
     recordType,
+    orderType,
     signCode,
     signDescription,
     orderCompletedOnDate: toDateOrNull(asString(row.order_completed_on_date)),
+    signLocation,
+    distanceFromIntersection,
+    arrowDirection,
+    facingDirection,
+    signXCoord,
+    signYCoord,
     payload: JSON.stringify(row)
   };
 }
@@ -73,26 +115,40 @@ async function upsertSignStage(client: import("pg").PoolClient, rows: SignStageR
   if (rows.length === 0) return;
   await client.query(`
     INSERT INTO signs_stage (
-      fingerprint, blockface_key, order_number, record_type, sign_code,
-      sign_description, order_completed_on_date, payload
+      fingerprint, blockface_key, order_number, record_type, order_type,
+      sign_code, sign_description, order_completed_on_date, sign_location,
+      distance_from_intersection, arrow_direction, facing_direction,
+      sign_x_coord, sign_y_coord, payload
     )
     SELECT * FROM UNNEST(
       $1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
-      $6::text[], $7::date[], $8::jsonb[]
+      $6::text[], $7::text[], $8::date[], $9::text[], $10::float8[],
+      $11::text[], $12::text[], $13::float8[], $14::float8[], $15::jsonb[]
     )
     ON CONFLICT (fingerprint) DO UPDATE SET
       blockface_key = EXCLUDED.blockface_key,
       order_number = EXCLUDED.order_number,
       record_type = EXCLUDED.record_type,
+      order_type = EXCLUDED.order_type,
       sign_code = EXCLUDED.sign_code,
       sign_description = EXCLUDED.sign_description,
       order_completed_on_date = EXCLUDED.order_completed_on_date,
+      sign_location = EXCLUDED.sign_location,
+      distance_from_intersection = EXCLUDED.distance_from_intersection,
+      arrow_direction = EXCLUDED.arrow_direction,
+      facing_direction = EXCLUDED.facing_direction,
+      sign_x_coord = EXCLUDED.sign_x_coord,
+      sign_y_coord = EXCLUDED.sign_y_coord,
       payload = EXCLUDED.payload
   `, [
     rows.map(row => row.fingerprint), rows.map(row => row.blockfaceKey),
     rows.map(row => row.orderNumber), rows.map(row => row.recordType),
-    rows.map(row => row.signCode), rows.map(row => row.signDescription),
-    rows.map(row => row.orderCompletedOnDate), rows.map(row => row.payload)
+    rows.map(row => row.orderType), rows.map(row => row.signCode),
+    rows.map(row => row.signDescription), rows.map(row => row.orderCompletedOnDate),
+    rows.map(row => row.signLocation), rows.map(row => row.distanceFromIntersection),
+    rows.map(row => row.arrowDirection), rows.map(row => row.facingDirection),
+    rows.map(row => row.signXCoord), rows.map(row => row.signYCoord),
+    rows.map(row => row.payload)
   ]);
 }
 
@@ -111,15 +167,24 @@ export async function ingestSigns(): Promise<void> {
         blockface_key TEXT NOT NULL,
         order_number TEXT,
         record_type TEXT,
+        order_type TEXT,
         sign_code TEXT,
         sign_description TEXT,
         order_completed_on_date DATE,
+        sign_location TEXT,
+        distance_from_intersection DOUBLE PRECISION,
+        arrow_direction TEXT,
+        facing_direction TEXT,
+        sign_x_coord DOUBLE PRECISION,
+        sign_y_coord DOUBLE PRECISION,
         payload JSONB NOT NULL
       ) ON COMMIT PRESERVE ROWS
     `);
     const select = [
-      "order_number", "record_type", "borough", "on_street", "from_street",
-      "to_street", "side_of_street", "order_completed_on_date", "sign_code", "sign_description"
+      "order_number", "record_type", "order_type", "borough", "on_street", "from_street",
+      "to_street", "side_of_street", "order_completed_on_date", "sign_code", "sign_description",
+      "sign_location", "distance_from_intersection", "arrow_direction", "facing_direction",
+      "sign_x_coord", "sign_y_coord"
     ].join(",");
 
     while (true) {
@@ -131,7 +196,10 @@ export async function ingestSigns(): Promise<void> {
         datasetId: config.nycSignsDatasetId,
         select,
         where: "upper(record_type) = 'CURRENT'",
-        orderBy: "order_number",
+        orderBy: [
+          "order_number", "sign_x_coord", "sign_y_coord", "distance_from_intersection",
+          "sign_code", "sign_description"
+        ].join(","),
         offset,
         limit: config.nycPageLimit
       });
@@ -164,20 +232,36 @@ export async function ingestSigns(): Promise<void> {
     }
     await client.query(`
       INSERT INTO parking_signs_raw (
-        fingerprint, blockface_key, order_number, record_type, sign_code,
-        sign_description, order_completed_on_date, payload, source_updated_at,
+        fingerprint, blockface_key, order_number, record_type, order_type,
+        sign_code, sign_description, order_completed_on_date, sign_location,
+        distance_from_intersection, arrow_direction, facing_direction,
+        sign_x_coord, sign_y_coord, geom, payload, source_updated_at,
         ingested_at, source_run_id
       )
-      SELECT fingerprint, blockface_key, order_number, record_type, sign_code,
-        sign_description, order_completed_on_date, payload, $2, now(), $1
+      SELECT fingerprint, blockface_key, order_number, record_type, order_type,
+        sign_code, sign_description, order_completed_on_date, sign_location,
+        distance_from_intersection, arrow_direction, facing_direction,
+        sign_x_coord, sign_y_coord,
+        CASE WHEN sign_x_coord BETWEEN 700000 AND 1300000 AND sign_y_coord BETWEEN 0 AND 500000
+          THEN ST_Transform(ST_SetSRID(ST_MakePoint(sign_x_coord, sign_y_coord), 2263), 4326)
+          ELSE NULL END,
+        payload, $2, now(), $1
       FROM signs_stage
       ON CONFLICT (fingerprint) DO UPDATE SET
         blockface_key = EXCLUDED.blockface_key,
         order_number = EXCLUDED.order_number,
         record_type = EXCLUDED.record_type,
+        order_type = EXCLUDED.order_type,
         sign_code = EXCLUDED.sign_code,
         sign_description = EXCLUDED.sign_description,
         order_completed_on_date = EXCLUDED.order_completed_on_date,
+        sign_location = EXCLUDED.sign_location,
+        distance_from_intersection = EXCLUDED.distance_from_intersection,
+        arrow_direction = EXCLUDED.arrow_direction,
+        facing_direction = EXCLUDED.facing_direction,
+        sign_x_coord = EXCLUDED.sign_x_coord,
+        sign_y_coord = EXCLUDED.sign_y_coord,
+        geom = EXCLUDED.geom,
         payload = EXCLUDED.payload,
         source_updated_at = EXCLUDED.source_updated_at,
         ingested_at = now(),

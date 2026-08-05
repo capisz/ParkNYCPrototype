@@ -88,6 +88,10 @@ export function rankRecommendations(options: RecommendationOption[]): Recommenda
   );
 }
 
+export function hasLikelyFreeLead(options: RecommendationOption[]): boolean {
+  return options.some(option => option.kind === "curb" && option.tier === "free");
+}
+
 export function curbOption(feature: ViewportFeature, destination: { latitude: number; longitude: number }): RecommendationOption | null {
   const status = feature.properties.status;
   if ((status !== "free" && status !== "paid") || feature.properties.coverage !== "full") return null;
@@ -108,7 +112,7 @@ export function curbOption(feature: ViewportFeature, destination: { latitude: nu
     subtitle: [
       feature.properties.sideOfStreet ? `${feature.properties.sideOfStreet} side` : null,
       [feature.properties.fromStreet, feature.properties.toStreet].filter(Boolean).join(" to "),
-      publicDataReference ? "Official NYC meter blockface reference" : null
+      publicDataReference ? "Likely free or paid public-data curb reference; verify posted signs" : null
     ].filter(Boolean).join(" · ") || "Street parking",
     latitude: point.latitude,
     longitude: point.longitude,
@@ -185,7 +189,9 @@ export async function getParkingRecommendations(preferences: RecommendationPrefe
       centerLat: preferences.latitude,
       centerLng: preferences.longitude,
       radiusMeters,
-      zoom: 16,
+      // Planning can inspect more candidates than a single map frame, but the
+      // server still enforces the 1,500 m proximity and segment caps.
+      zoom: 18,
       start: preferences.arrival,
       end: preferences.departure
     });
@@ -203,19 +209,22 @@ export async function getParkingRecommendations(preferences: RecommendationPrefe
     .filter(option => option.status === "free" || preferences.allowPaid);
   let options = eligibleCurbOptions(parking.features);
 
-  // A zero-result screen is not useful. Search up to a 19-minute walking ring
-  // and label the result as an expanded fallback instead of weakening the
-  // classification rules or fabricating green curbs near the destination.
-  if (config.features.curbGuidance && options.length === 0 && preferredWalkRadius < 1_500) {
+  // Nearby paid parking must not stop the search for a supported likely-free
+  // lead. Widen once, within the API's bounded 1,500 m proximity cap, without
+  // weakening classifications or fabricating green curbs.
+  if (config.features.curbGuidance && !hasLikelyFreeLead(options) && preferredWalkRadius < 1_500) {
     const expandedParking = await loadParking(1_500);
     const expandedOptions = eligibleCurbOptions(expandedParking.features);
-    if (expandedOptions.length > 0) {
+    const foundLikelyFree = hasLikelyFreeLead(expandedOptions);
+    if (foundLikelyFree || (options.length === 0 && expandedOptions.length > 0)) {
       parking = expandedParking;
       options = expandedOptions;
       searchRadiusMeters = 1_500;
       warnings.push({
-        code: "walking_area_expanded",
-        message: `No free or paid curb lead matched the preferred ${preferences.maxWalkMinutes}-minute walk. Pidge expanded the search to about 19 minutes and ranked the closest supported alternatives.`
+        code: foundLikelyFree ? "likely_free_search_expanded" : "walking_area_expanded",
+        message: foundLikelyFree
+          ? `No likely-free curb lead matched the preferred ${preferences.maxWalkMinutes}-minute walk. Pidge expanded the search to about 19 minutes and found supported green alternatives before ranking paid options.`
+          : `No likely-free or paid curb lead matched the preferred ${preferences.maxWalkMinutes}-minute walk. Pidge expanded the search to about 19 minutes and ranked the closest supported alternatives.`
       });
     }
   }
@@ -293,6 +302,7 @@ export async function getParkingRecommendations(preferences: RecommendationPrefe
       datasetId: dataset.datasetId,
       version: dataset.version,
       sourceUpdatedAt: dataset.sourceUpdatedAt,
+      sourceCheckedAt: dataset.sourceCheckedAt,
       state: dataset.state
     })),
     parkingCalendar,

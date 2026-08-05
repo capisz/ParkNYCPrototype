@@ -11,7 +11,7 @@ enum ParkingStatus: String {
 
     var title: String {
         switch self {
-        case .legalNow: return "Free parking"
+        case .legalNow: return "Likely free · verify signs"
         case .caution: return "Paid parking"
         case .illegalNow: return "Cannot park"
         case .unknown: return "Unknown — check signs"
@@ -185,7 +185,7 @@ struct ParkingRecommendation: Identifiable, Decodable, Equatable {
 
     var tierLabel: String {
         switch tier {
-        case "free": return guidanceLevel == "public_data_reference" ? "Likely free · verify signs" : "Free curb"
+        case "free": return "Likely free · verify signs"
         case "paid": return guidanceLevel == "public_data_reference" ? "Paid lead · verify signs" : "Paid curb"
         case "facility": return "Licensed facility"
         case "park_and_ride": return "Park and ride"

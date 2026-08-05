@@ -341,7 +341,7 @@ export default function ParkingMapScreen({ plan, onChangePlan }: Props) {
       setLastUpdated(new Date(storedAt))
       setMessage(modeRef.current === 'best'
         ? 'Visible curb map updated'
-        : `${payload.summary.cannotPark} cannot park • ${payload.summary.paid} paid • ${payload.summary.free} free • ${payload.summary.unknown} unknown`)
+        : `${payload.summary.cannotPark} cannot park • ${payload.summary.paid} paid • ${payload.summary.free} likely free • ${payload.summary.unknown} unknown`)
     }
     const cached = viewportCache.get(cacheKey)
     if (cached) {

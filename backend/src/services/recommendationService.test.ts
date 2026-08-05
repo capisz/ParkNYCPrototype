@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { curbOption, distanceMeters, rankRecommendations, RecommendationOption } from "./recommendationService";
+import {
+  curbOption,
+  distanceMeters,
+  hasLikelyFreeLead,
+  rankRecommendations,
+  RecommendationOption
+} from "./recommendationService";
 import type { ViewportFeature } from "./parkingService";
 
 function option(tier: RecommendationOption["tier"], distance: number, score: number): RecommendationOption {
@@ -43,6 +49,14 @@ describe("parking recommendation ranking", () => {
     expect(rankRecommendations([farther, nearer]).map(item => item.distanceMeters)).toEqual([200, 600]);
   });
 
+  it("continues the bounded search when the preferred ring contains only paid leads", () => {
+    expect(hasLikelyFreeLead([option("paid", 200, 10)])).toBe(false);
+    expect(hasLikelyFreeLead([
+      option("paid", 200, 10),
+      option("free", 900, 40)
+    ])).toBe(true);
+  });
+
   it("calculates realistic short geographic distances", () => {
     const distance = distanceMeters(
       { latitude: 40.7484, longitude: -73.9857 },
@@ -62,7 +76,7 @@ describe("parking recommendation ranking", () => {
         geometryValidated: false, geometryBasis: "official_meter_blockface",
         recommendationEligible: false, onStreet: "West 34 Street",
         fromStreet: "5 Avenue", toStreet: "6 Avenue", sideOfStreet: "N",
-        ruleSummary: "Green means free parking for the complete planned interval.",
+        ruleSummary: "Green means likely free parking for the complete planned interval; verify posted signs.",
         nextChange: null, sourceVersion: "active-meter-run"
       }
     } as ViewportFeature;

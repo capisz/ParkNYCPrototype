@@ -177,12 +177,12 @@ test('plans a complete stay and exposes exact map semantics', async ({ page }, t
   await page.getByRole('button', { name: '← Results', exact: true }).click()
   await expect(page.getByText('Red means cannot park')).toBeVisible()
   await expect(page.getByText('Yellow means paid parking')).toBeVisible()
-  await expect(page.getByText('Green means free parking')).toBeVisible()
+  await expect(page.getByText('Green means likely free · verify signs')).toBeVisible()
   await expect(page.getByText('Gray means unknown — check signs')).toBeVisible()
   await page.getByRole('button', { name: 'Curbs', exact: true }).click()
   await expect(page.getByText('1 cannot park', { exact: true })).toBeVisible()
   await expect(page.getByText('Visible map totals')).toBeVisible()
-  await expect(page.getByText('1 cannot park • 1 paid • 1 free • 1 unknown')).toBeVisible()
+  await expect(page.getByText('1 cannot park • 1 paid • 1 likely free • 1 unknown')).toBeVisible()
   await page.getByRole('button', { name: 'Zoom in' }).click()
   await expectRenderedCurbColors(page)
   const mapAccessibility = await new AxeBuilder({ page }).analyze()
@@ -265,7 +265,7 @@ test('explains unresolved coverage without inventing parking options', async ({ 
   } }))
 
   await planTrip(page)
-  await expect(page.getByText('No validated free or paid options yet')).toBeVisible()
+  await expect(page.getByText('No supported likely-free or paid options yet')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Review all 4 curb references' })).toBeVisible()
 })
 
@@ -274,7 +274,7 @@ test('keeps the map interactive and reuses parking geometry while zooming', asyn
   await planTrip(page)
   await page.getByRole('button', { name: '← Results', exact: true }).click()
   await page.getByRole('button', { name: 'Curbs', exact: true }).click()
-  await expect(page.getByText('1 cannot park • 1 paid • 1 free • 1 unknown')).toBeVisible()
+  await expect(page.getByText('1 cannot park • 1 paid • 1 likely free • 1 unknown')).toBeVisible()
   await expect(page.getByTestId('loading-overlay')).toHaveCount(0)
 
   await page.unroute('**/api/v1/curb/viewport**')
@@ -289,7 +289,7 @@ test('keeps the map interactive and reuses parking geometry while zooming', asyn
   await expect(page.getByTestId('loading-overlay')).toHaveCount(0)
   await zoomIn.click()
   await page.waitForTimeout(500)
-  await expect(page.getByText('1 cannot park • 1 paid • 1 free • 1 unknown')).toBeVisible()
+  await expect(page.getByText('1 cannot park • 1 paid • 1 likely free • 1 unknown')).toBeVisible()
   expect(redundantRequests).toBe(0)
 })
 

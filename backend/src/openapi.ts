@@ -152,12 +152,13 @@ export const openApiDocument = {
             type: "array",
             items: {
               type: "object",
-              required: ["dataset", "datasetId", "version", "sourceUpdatedAt", "state"],
+              required: ["dataset", "datasetId", "version", "sourceUpdatedAt", "sourceCheckedAt", "state"],
               properties: {
                 dataset: { enum: ["geometry", "meters", "signs", "facilities"] },
                 datasetId: { type: "string" },
                 version: { type: ["string", "null"] },
                 sourceUpdatedAt: { type: ["string", "null"], format: "date-time" },
+                sourceCheckedAt: { type: ["string", "null"], format: "date-time" },
                 state: { enum: ["fresh", "stale", "missing", "failed"] }
               }
             }

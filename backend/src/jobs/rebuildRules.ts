@@ -6,12 +6,21 @@ type SegmentEvidence = {
   id: string;
   paid_hours: string | null;
   has_meter: boolean;
-  signs: string[] | null;
+  signs: SignEvidence[] | null;
+};
+
+type SignEvidence = {
+  description: string;
+  arrowDirection: string | null;
+  distanceFromIntersection: number | null;
+  xCoord: number | null;
+  yCoord: number | null;
 };
 
 type RuleInsert = ParsedRule & { segmentId: string };
 
 const PUBLIC_DATA_FREE_REFERENCE_SOURCE = "nyc-sign-meter-free-reference";
+const PUBLIC_DATA_ASSUMED_FREE_SOURCE = "nyc-sign-assumed-free-reference";
 
 /**
  * These are informational companions to a regulatory sign, not independent
@@ -29,9 +38,39 @@ function isInformationalSignPanel(value: string): boolean {
     /\bMETERS? (?:ARE|IS) NOT IN EFFECT ABOVE TIMES\b/.test(text);
 }
 
+function parserTextForSign(sign: SignEvidence): { text: string; directionalReference: boolean } {
+  const description = sign.description.replace(/\s+/g, " ").trim();
+  const asciiArrow = /(?:<-{1,8}>|-{1,8}>|<-{1,8})/;
+  const hasDirectionalPanel = /\b(?:SINGLE|DOUBLE)\s+ARROWS?\b/i.test(description) ||
+    asciiArrow.test(description);
+  if (!hasDirectionalPanel) return { text: description, directionalReference: false };
+
+  const hasResolvedDirection = /\bDOUBLE\s+ARROWS?\b/i.test(description) ||
+    /<-{1,8}>/.test(description) || Boolean(sign.arrowDirection);
+  if (!hasResolvedDirection) return { text: description, directionalReference: false };
+  return {
+    text: description
+      .replace(/\(?\b(?:SINGLE|DOUBLE)\s+ARROWS?\b\)?/gi, " ")
+      .replace(/(?:<-{1,8}>|-{1,8}>|<-{1,8})/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+    directionalReference: true
+  };
+}
+
+function rulesForSign(sign: SignEvidence): ParsedRule[] {
+  const parserInput = parserTextForSign(sign);
+  return parseParkingRules(parserInput.text, "nyc-signs").map(rule => ({
+    ...rule,
+    reason: parserInput.directionalReference
+      ? `${sign.description} Directional extent is conservatively applied to the full blockface reference.`
+      : rule.reason
+  }));
+}
+
 function rulesForSegment(row: SegmentEvidence): RuleInsert[] {
-  const regulatorySigns = (row.signs ?? []).filter(text => !isInformationalSignPanel(text));
-  const signRules = regulatorySigns.flatMap(text => parseParkingRules(text, "nyc-signs"));
+  const regulatorySigns = (row.signs ?? []).filter(sign => !isInformationalSignPanel(sign.description));
+  const signRules = regulatorySigns.flatMap(rulesForSign);
   const parsed = signRules
     // ParkNYC supplies the canonical paid schedule for meter blockfaces. Keep
     // the linked sign in the completeness gate, but do not persist a duplicate
@@ -74,16 +113,20 @@ function rulesForSegment(row: SegmentEvidence): RuleInsert[] {
   // time from a missing active rule. More restrictive recognized sign and
   // meter windows still win in the interval classifier. Any unresolved linked
   // regulatory sign prevents the baseline from being published.
-  if (row.has_meter && hasRecognizedMeterSchedule && regulatorySigns.length > 0 && !hasUnresolvedRegulatorySign) {
+  const evidenceComplete = regulatorySigns.length > 0 && !hasUnresolvedRegulatorySign &&
+    (!row.has_meter || hasRecognizedMeterSchedule);
+  if (evidenceComplete) {
     parsed.push({
       segmentId: row.id,
       status: "free",
       dayMask: 127,
       startMinute: 0,
       endMinute: 1440,
-      confidence: 0.65,
-      reason: "Current linked NYC sign records and the ParkNYC meter schedule fully resolve this blockface; no payment or recognized prohibition is active outside their scheduled windows.",
-      source: PUBLIC_DATA_FREE_REFERENCE_SOURCE
+      confidence: row.has_meter ? 0.65 : 0.6,
+      reason: row.has_meter
+        ? "Current linked NYC sign records and the ParkNYC meter schedule fully resolve this blockface; no payment or recognized prohibition is active outside their scheduled windows."
+        : "Current linked NYC sign records fully resolve this blockface; no meter or recognized prohibition is active outside their scheduled windows.",
+      source: row.has_meter ? PUBLIC_DATA_FREE_REFERENCE_SOURCE : PUBLIC_DATA_ASSUMED_FREE_SOURCE
     });
   }
 
@@ -136,10 +179,16 @@ export async function rebuildRules(): Promise<void> {
       )
       SELECT sk.id::text, sk.paid_hours,
         COALESCE(m.has_meter, false) AS has_meter,
-        COALESCE(ps.signs, ARRAY[]::text[]) AS signs
+        COALESCE(ps.signs, '[]'::jsonb) AS signs
       FROM segment_keys sk
       LEFT JOIN LATERAL (
-        SELECT array_remove(array_agg(DISTINCT sign_description), NULL) AS signs
+        SELECT jsonb_agg(DISTINCT jsonb_build_object(
+          'description', sign_description,
+          'arrowDirection', arrow_direction,
+          'distanceFromIntersection', distance_from_intersection,
+          'xCoord', sign_x_coord,
+          'yCoord', sign_y_coord
+        )) FILTER (WHERE sign_description IS NOT NULL) AS signs
         FROM parking_signs_raw
         WHERE blockface_key = sk.blockface_key OR blockface_key4(blockface_key) = sk.key4
           OR blockface_key4(blockface_key) = sk.key4_rev
@@ -157,7 +206,7 @@ export async function rebuildRules(): Promise<void> {
     await client.query("BEGIN");
     await client.query("TRUNCATE TABLE curb_rules");
     await insertRules(client, rules);
-    await client.query("UPDATE curb_segments SET interpretation_version = 'parking-rules-v3-public-reference', updated_at = now()");
+    await client.query("UPDATE curb_segments SET interpretation_version = 'parking-rules-v4-assumed-free', updated_at = now()");
     await client.query("COMMIT");
     console.log(`[ingest:rules] complete. segments=${evidence.rowCount ?? 0} rules=${rules.length}`);
   } catch (error) {
@@ -176,5 +225,7 @@ if (require.main === module) {
 export const rebuildRulesInternals = {
   isInformationalSignPanel,
   rulesForSegment,
-  PUBLIC_DATA_FREE_REFERENCE_SOURCE
+  parserTextForSign,
+  PUBLIC_DATA_FREE_REFERENCE_SOURCE,
+  PUBLIC_DATA_ASSUMED_FREE_SOURCE
 };

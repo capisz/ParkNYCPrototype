@@ -53,7 +53,7 @@ function nextSnap(current: SheetSnap, direction: -1 | 1): SheetSnap {
 function statusLabel(status: ParkingStatus): string {
   if (status === 'cannot_park') return 'Cannot park'
   if (status === 'paid') return 'Paid parking'
-  if (status === 'free') return 'Free parking'
+  if (status === 'free') return 'Likely free · verify signs'
   return 'Unknown — check signs'
 }
 
@@ -178,7 +178,7 @@ export default function AdaptiveMapSheet(props: Props) {
       {!selected && <div className="parking-legend" aria-label="Parking color legend">
         <span><i className="cannot-park" />Red means cannot park</span>
         <span><i className="paid" />Yellow means paid parking</span>
-        <span><i className="free" />Green means free parking</span>
+        <span><i className="free" />Green means likely free · verify signs</span>
         <span><i className="unknown" />Gray means unknown — check signs</span>
         <span className="hydrant-reference"><i />Red ring: approximate 15 ft hydrant safety reference — verify the curb</span>
       </div>}
@@ -187,13 +187,13 @@ export default function AdaptiveMapSheet(props: Props) {
         <b>{mode === 'best' ? 'Best parking leads' : 'Visible map totals'}</b>
         <div className="availability-strip" aria-label={mode === 'best' ? 'Planned area parking status totals' : 'Visible map parking status totals'}>
           {mode !== 'best' && <span><i className="cannot-park" />{availability.cannotPark} cannot park</span>}
-          <span><i className="free" />{mode === 'best' ? freeLeadCount : availability.free} free</span>
+          <span><i className="free" />{mode === 'best' ? freeLeadCount : availability.free} likely free</span>
           <span><i className="paid" />{mode === 'best' ? paidLeadCount : availability.paid} paid</span>
           {mode !== 'best' && <span><i className="unknown" />{availability.unknown} unknown</span>}
         </div>
         {mode === 'best' && <div className="coverage-summary">
           <b>{curbLeadCount} ranked curb {curbLeadCount === 1 ? 'lead' : 'leads'}</b>
-          {freeLeadCount === 0 && curbLeadCount > 0 && <span>No supported free curb matched this trip time, so paid alternatives are shown next.</span>}
+          {freeLeadCount === 0 && curbLeadCount > 0 && <span>No supported likely-free curb matched this trip time, so paid alternatives are shown next.</span>}
           {searchExpanded && <span>Pidge expanded beyond the preferred walking area to find supported alternatives.</span>}
           {referenceLeadCount > 0 && <span>{referenceLeadCount} use official NYC meter blockface geometry and require an on-street sign check.</span>}
           {curbLeadCount === 0 && <span>{availability.unknown} nearby curb records remain gray until their evidence is complete.</span>}
@@ -288,7 +288,7 @@ function ResultList(props: {
       </button>)}
       {count === 0 && !isLoading && (unknownOnly ? <div className="coverage-empty">
         <div className="coverage-empty-colors" aria-hidden="true"><i className="paid" /><i className="free" /></div>
-        <b>No validated free or paid options yet</b>
+        <b>No supported likely-free or paid options yet</b>
         <p>We reviewed {reviewedCount} nearby curb records for the complete stay. {availability?.unknown} still need verified geometry or rule evidence, so they remain gray.</p>
         <div>
           <button type="button" onClick={() => onModeChange('street')}>Review all {reviewedCount} curb references</button>
@@ -330,8 +330,8 @@ function CurbDetail({ feature, now, isLoading, error, onBack }: {
     {referenceOnly && <p className="curb-reference-notice" role="note">
       <b>Reference only—not a recommendation.</b>{' '}
       {feature.properties.geometryBasis === 'official_meter_blockface'
-        ? feature.properties.status === 'free'
-          ? 'Green is a public-data estimate for the selected interval because the linked current sign records and meter schedule were fully recognized. This is not DOT-approved curb-side geometry or proof that a physical space is available.'
+          ? feature.properties.status === 'free'
+          ? 'Green is an assumed legally free curb reference for the selected interval because the linked current sign records and meter schedule were fully recognized. It does not indicate whether a physical space is vacant.'
           : 'This official meter blockface helps locate parking regulation evidence, but it is not DOT-approved curb-side geometry.'
         : 'This curb does not currently pass every geometry, evidence, freshness, and rule-coverage gate.'}
     </p>}
@@ -380,7 +380,7 @@ function RecommendationDetail({ option, plan, now, onBack }: { option: Recommend
     <div className="recommendation-facts"><b>{option.walkMinutes} min walk</b><span>{option.distanceMeters} m away</span></div>
     <p>{option.ruleSummary}</p>
     {option.guidanceLevel === 'public_data_reference' && <p className="curb-reference-notice" role="note">
-      <b>Official public-data lead, not a guaranteed space.</b> Pidge ranked this blockface because its current NYC meter and sign evidence supports the selected interval. Confirm every posted sign, curb condition, hydrant clearance, and meter before parking.
+      <b>Assumed legal curb status, not live occupancy.</b> Pidge ranked this blockface because its current NYC meter and sign evidence supports the selected interval. Confirm every posted sign, curb condition, hydrant clearance, and meter before parking.
     </p>}
     {option.facility && <p>DCWP license {option.facility.licenseNumber} · {option.facility.licenseStatus}</p>}
     <small>Advisory guidance only. Check posted signs, facility terms, and current conditions.</small>

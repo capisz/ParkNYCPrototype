@@ -373,6 +373,9 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .recommendation-stay span { color: #617080; font-size: 0.67rem; font-weight: 850; text-transform: uppercase; }
 .recommendation-stay strong { color: var(--ink); font-size: 0.86rem; }
 .best-lead-label { display: inline-flex; margin-bottom: 7px; border-radius: 999px; padding: 5px 9px; background: #26324b; color: white; font-size: 0.62rem; font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase; }
+.recommendation-detail .best-lead-label { margin-right: 8px; vertical-align: middle; }
+.recommendation-detail > .status { display: inline-block; margin-bottom: 7px; vertical-align: middle; }
+.recommendation-detail .curb-reference-notice { border-left-color: var(--free); background: #edf8f1; color: #244b33; }
 .transit-route { align-items: center; background: #dce7f2; }
 .transit-route b { border-radius: 8px; padding: 6px 9px; background: #225f9b; color: white; }
 .transit-route span { color: var(--slate); text-align: right; }

@@ -8,6 +8,7 @@ export type IngestionRun = {
   datasetKey: "geometry" | "meters" | "signs" | "facilities";
   sourceDatasetId: string;
   sourceUpdatedAt: Date | null;
+  sourceCheckedAt: Date;
 };
 
 type SocrataMetadata = {
@@ -46,11 +47,17 @@ export async function startIngestionRun(
   const sourceUpdatedAt = await fetchSourceUpdatedAt(sourceDatasetId);
   const result = await pool.query<{ id: string }>(`
     INSERT INTO ingestion_runs (
-      dataset_key, source_dataset_id, status, source_updated_at
-    ) VALUES ($1, $2, 'running', $3)
+      dataset_key, source_dataset_id, status, source_updated_at, source_checked_at
+    ) VALUES ($1, $2, 'running', $3, now())
     RETURNING id::text
   `, [datasetKey, sourceDatasetId, sourceUpdatedAt]);
-  return { id: result.rows[0].id, datasetKey, sourceDatasetId, sourceUpdatedAt };
+  return {
+    id: result.rows[0].id,
+    datasetKey,
+    sourceDatasetId,
+    sourceUpdatedAt,
+    sourceCheckedAt: new Date()
+  };
 }
 
 export function snapshotChecksum(keys: Iterable<string>): string {
@@ -74,7 +81,7 @@ export async function publishIngestionRun(
   await client.query(`
     UPDATE ingestion_runs
     SET status = 'published', completed_at = now(), published_at = now(),
-      row_count = $2, checksum = $3, metadata = $4::jsonb
+      source_checked_at = now(), row_count = $2, checksum = $3, metadata = $4::jsonb
     WHERE id = $1
   `, [run.id, rowCount, checksum, JSON.stringify(metadata)]);
 }

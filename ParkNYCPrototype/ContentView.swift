@@ -813,7 +813,7 @@ struct ContentView: View {
         if mode != .garages {
             let availability = currentAvailability
             HStack(spacing: 7) {
-                availabilityPill(label: "Free", value: availability.free, color: .green)
+                availabilityPill(label: "Likely free", value: availability.free, color: .green)
                 availabilityPill(label: "Paid", value: availability.paid, color: .yellow)
                 availabilityPill(label: "Cannot park", value: availability.cannotPark, color: .red)
                 availabilityPill(label: "Unknown", value: availability.unknown, color: .gray)
@@ -2668,7 +2668,7 @@ private struct ParkingLegend: View {
         VStack(alignment: .leading, spacing: 6) {
             legendRow(color: .red, text: "Red means cannot park")
             legendRow(color: .yellow, text: "Yellow means paid parking")
-            legendRow(color: .green, text: "Green means free parking")
+            legendRow(color: .green, text: "Green means likely free · verify signs")
             legendRow(color: .gray, text: "Gray means unknown — check signs")
             Text("Classifications cover the selected arrival-to-leave interval.")
                 .foregroundStyle(.secondary)
@@ -2824,7 +2824,7 @@ private struct ParkingPopup: View {
                     .foregroundStyle(.secondary)
 
                 if segment.status == .legalNow {
-                    Text("Free parking right now")
+                    Text("Likely free · verify signs")
                         .font(.callout)
                 } else if segment.status == .caution {
                     Text("Parking allowed now, but payment is required")

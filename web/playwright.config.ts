@@ -4,6 +4,8 @@ export default defineConfig({
   testDir: './e2e',
   outputDir: './node_modules/.cache/pidge-playwright-results',
   fullyParallel: true,
+  // MapLibre contexts are GPU-heavy; a small cap prevents false timeouts.
+  workers: 2,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   use: {

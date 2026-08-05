@@ -135,6 +135,7 @@ export type DatasetStatus = {
   datasetId: string;
   state: "fresh" | "stale" | "missing" | "failed";
   sourceUpdatedAt: string | null;
+  sourceCheckedAt: string | null;
   publishedAt: string | null;
   rowCount: number | null;
   version: string | null;
@@ -404,12 +405,14 @@ async function loadDataStatus(now: Date): Promise<DataStatusResponse> {
     source_dataset_id: string;
     status: string;
     source_updated_at: Date | string | null;
+    source_checked_at: Date | string | null;
     published_at: Date | string | null;
     row_count: number | null;
     id: string;
   }>(`
     SELECT DISTINCT ON (dataset_key)
-      dataset_key, source_dataset_id, status, source_updated_at, published_at, row_count, id::text
+      dataset_key, source_dataset_id, status, source_updated_at, source_checked_at,
+      published_at, row_count, id::text
     FROM ingestion_runs
     ORDER BY dataset_key, started_at DESC
   `), dbQuery<{
@@ -434,12 +437,13 @@ async function loadDataStatus(now: Date): Promise<DataStatusResponse> {
     const row = byDataset.get(dataset);
     const maxAgeHours = DATASET_MAX_AGE_HOURS[dataset];
     const sourceUpdatedAt = iso(row?.source_updated_at ?? null);
-    const ageHours = sourceUpdatedAt == null ? Number.POSITIVE_INFINITY :
-      (now.getTime() - new Date(sourceUpdatedAt).getTime()) / 3_600_000;
+    const sourceCheckedAt = iso(row?.source_checked_at ?? null);
+    const ageHours = sourceCheckedAt == null ? Number.POSITIVE_INFINITY :
+      (now.getTime() - new Date(sourceCheckedAt).getTime()) / 3_600_000;
     const state = !row ? "missing" : row.status === "failed" ? "failed" :
-      row.status !== "published" || ageHours > maxAgeHours ? "stale" : "fresh";
+      row.status !== "published" || sourceUpdatedAt == null || ageHours > maxAgeHours ? "stale" : "fresh";
     return {
-      dataset, datasetId, state, sourceUpdatedAt,
+      dataset, datasetId, state, sourceUpdatedAt, sourceCheckedAt,
       publishedAt: iso(row?.published_at ?? null),
       rowCount: row?.row_count ?? null,
       version: row?.id ?? null,
@@ -600,7 +604,7 @@ function featureFromRow(
     : classification.status === "paid"
       ? "Yellow means paid parking during at least part of this planned interval."
       : classification.status === "free"
-        ? "Green means free parking for the complete planned interval."
+        ? "Green means likely free curb parking for the complete planned interval; verify posted signs."
         : classification.evidence[0]?.reason ?? "Parking status is unknown; check posted signs.";
 
   return {

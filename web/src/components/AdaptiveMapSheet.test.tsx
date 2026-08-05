@@ -103,9 +103,9 @@ describe('adaptive map sheet', () => {
     expect(screen.getByRole('heading', { name: 'Parking options' })).toBeTruthy()
     expect(screen.getByText('Red means cannot park')).toBeTruthy()
     expect(screen.getByText('Yellow means paid parking')).toBeTruthy()
-    expect(screen.getByText('Green means free parking')).toBeTruthy()
+    expect(screen.getByText('Green means likely free · verify signs')).toBeTruthy()
     expect(screen.getByText('Gray means unknown — check signs')).toBeTruthy()
-    expect(screen.getByText('1 free')).toBeTruthy()
+    expect(screen.getByText('1 likely free')).toBeTruthy()
     expect(screen.queryByText('5 cannot park')).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Minimize parking panel' }))
     expect(screen.getByRole('button', { name: 'Open parking panel' })).toBeTruthy()
@@ -150,7 +150,7 @@ describe('adaptive map sheet', () => {
       onSelectRecommendation={vi.fn()}
     />)
 
-    expect(screen.getByText('No validated free or paid options yet')).toBeTruthy()
+    expect(screen.getByText('No supported likely-free or paid options yet')).toBeTruthy()
     expect(screen.getByText('0 ranked curb leads')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Review all 4 curb references' }))
     expect(onModeChange).toHaveBeenCalledWith('street')
@@ -221,7 +221,7 @@ describe('adaptive map sheet', () => {
         properties: {
           status: 'free', color: '#238b45', confidence: 0.65, coverage: 'full',
           geometryValidated: false, geometryBasis: 'official_meter_blockface', recommendationEligible: false,
-          ruleSummary: 'Green means free parking for the complete planned interval.', nextChange: null,
+          ruleSummary: 'Green means likely free parking for the complete planned interval; verify posted signs.', nextChange: null,
           onStreet: '5 Avenue', sideOfStreet: 'East',
         },
       }}
@@ -244,7 +244,7 @@ describe('adaptive map sheet', () => {
       onSelectGarage={vi.fn()}
       onSelectRecommendation={vi.fn()}
     />)
-    expect(screen.getByText(/Green is a public-data estimate/)).toBeTruthy()
-    expect(screen.getByText(/not.*proof that a physical space is available/i)).toBeTruthy()
+    expect(screen.getByText(/Green is an assumed legally free curb reference/)).toBeTruthy()
+    expect(screen.getByText(/does not indicate whether a physical space is vacant/i)).toBeTruthy()
   })
 })
