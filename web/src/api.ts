@@ -1,3 +1,4 @@
+import { DEMO_MODE } from './demoConfig'
 import type { FeatureCollection } from 'geojson'
 import type {
   Garage,
@@ -19,6 +20,7 @@ export class ApiError extends Error {
 }
 
 async function requestJson<T>(url: string, options: RequestInit = {}): Promise<T> {
+  if (DEMO_MODE) return (await import('./demo')).demoRequest(url, options) as Promise<T>
   const response = await fetch(url, options)
   if (!response.ok) {
     let message = `Request failed (${response.status})`

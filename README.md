@@ -19,6 +19,10 @@ The current implementation fails closed:
 - `backend/`: Express/TypeScript, Postgres/PostGIS, staged ingestion, freshness gates, and versioned advisory APIs.
 - `docs/pilot-readiness/`: ownership, decisions, risks, release gates, operations, privacy, and accessibility records.
 
+## Browser demo
+
+For a recordable version without the API or database, see [the demo and deployment guide](DEMO.md). The demo uses explicitly labeled fictional data and supports desktop and phone-sized browsers.
+
 ## Local development
 
 Bootstrap the repository-managed Postgres/PostGIS cluster and load source snapshots:
