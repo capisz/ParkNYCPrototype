@@ -1,13 +1,9 @@
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
-import { DEMO_MODE, DEMO_NOTICE } from './demoConfig'
 
 createRoot(document.getElementById('root')!).render(
-  <>
-    {DEMO_MODE && <div className="demo-notice" role="note">{DEMO_NOTICE}. Try Empire State Building, Bryant Park, or Times Square.</div>}
-    <App />
-  </>,
+  <App />,
 )
 
 const DEVELOPMENT_SW_RESET_KEY = 'nyc-parking-development-sw-reset'

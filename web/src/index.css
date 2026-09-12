@@ -5,5 +5,3 @@ body,
   min-width: 320px;
   min-height: 100%;
 }
-
-.demo-notice { position: fixed; bottom: 0; left: 0; right: 0; z-index: 10000; padding: 7px 12px; background: #172c42; color: white; font: 12px/1.4 system-ui, sans-serif; text-align: center; pointer-events: none; }

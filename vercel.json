@@ -1,6 +1,0 @@
-{
-  "installCommand": "npm ci --prefix web",
-  "buildCommand": "npm --prefix web run build:demo",
-  "outputDirectory": "web/dist",
-  "framework": null
-}
